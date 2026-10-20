@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build Debug & Release APK
+    name: Build Signed Release & Debug APK
     runs-on: ubuntu-latest
 
     steps:
@@ -54,22 +54,53 @@ jobs:
             fi
           fi
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Build Debug & Release APKs
+        run: gradle assembleDebug assembleRelease --no-daemon --stacktrace
 
-      - name: Build Release APK
-        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Align & Sign Release APK (V1 + V2 + V3 Signature)
+        run: |
+          BUILD_TOOLS="${ANDROID_HOME}/build-tools/35.0.0"
+          RELEASE_DIR="app/build/outputs/apk/release"
+          UNSIGNED_APK="${RELEASE_DIR}/app-release-unsigned.apk"
+          ALIGNED_APK="${RELEASE_DIR}/app-release-aligned.apk"
+          SIGNED_APK="${RELEASE_DIR}/DeepVault-Recovery-v2.0-Signed.apk"
+
+          # Generate a dedicated non-debug release keystore so Play Protect does not flag public debug keys
+          keytool -genkeypair -v \
+            -keystore release-signing.jks \
+            -storepass deepvault2026 \
+            -alias deepvault_release \
+            -keypass deepvault2026 \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=DeepVault Studio, OU=Engineering, O=DeepVault Labs, L=Mumbai, ST=MH, C=IN"
+
+          "${BUILD_TOOLS}/zipalign" -v -p 4 "${UNSIGNED_APK}" "${ALIGNED_APK}"
+          "${BUILD_TOOLS}/apksigner" sign \
+            --ks release-signing.jks \
+            --ks-key-alias deepvault_release \
+            --ks-pass pass:deepvault2026 \
+            --key-pass pass:deepvault2026 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "${SIGNED_APK}" \
+            "${ALIGNED_APK}"
+
+          "${BUILD_TOOLS}/apksigner" verify --verbose "${SIGNED_APK}"
+          rm -f "${UNSIGNED_APK}" "${ALIGNED_APK}" release-signing.jks
+
+      - name: Upload Signed Release APK (Recommended for Phone Install)
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepVault-Recovery-Release-Signed-APK
+          path: app/build/outputs/apk/release/DeepVault-Recovery-v2.0-Signed.apk
+          if-no-files-found: error
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: DeepVault-Recovery-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-
-      - name: Upload Release APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DeepVault-Recovery-Release-APK
-          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: ignore

@@ -582,20 +582,13 @@ fun ContactsScreen(nav: NavController, vm: AppViewModel) {
 
 // ---------------- Notification Cleaner / Recovery ----------------
 
-private fun isListenerEnabled(context: android.content.Context): Boolean {
-    val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: return false
-    return flat.contains(context.packageName)
-}
-
 @Composable
 fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
     val context = LocalContext.current
     val notifications by vm.notifications.collectAsState()
-    var enabled by remember { mutableStateOf(isListenerEnabled(context)) }
     var tab by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
         vm.loadNotifications()
-        enabled = isListenerEnabled(context)
     }
 
     val filtered = when (tab) {
@@ -605,7 +598,7 @@ fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
     }
 
     SimpleScaffold(
-        title = "Notification Cleaner",
+        title = "Notification & Chat Log",
         onBack = { nav.popBackStack() },
         warmBackground = true,
         actions = {
@@ -617,43 +610,49 @@ fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
         }
     ) { mod ->
         Column(mod.fillMaxSize()) {
-            if (!enabled) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F9)),
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Notification Access Needed", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "Enable notification listener access to capture and clean incoming & deleted notifications.",
-                            color = Color(0xFF666B75),
-                            fontSize = 13.sp
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("System Notification History & Media", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "View Android's built-in notification log or scan cached chat & alert media without background listener permissions.",
+                        color = Color(0xFF666B75),
+                        fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = {
+                                runCatching {
                                     context.startActivity(
-                                        Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                                        Intent("android.settings.NOTIFICATION_HISTORY")
                                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     )
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
-                                shape = RoundedCornerShape(50)
-                            ) { Text("Enable Access", fontWeight = FontWeight.Bold) }
-                            Button(
-                                onClick = {
-                                    enabled = isListenerEnabled(context)
-                                    vm.loadNotifications()
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = CapacityBlue),
-                                shape = RoundedCornerShape(50)
-                            ) { Text("Refresh") }
-                        }
+                                }.onFailure {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Settings.ACTION_SETTINGS)
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("System History", fontWeight = FontWeight.Bold) }
+                        Button(
+                            onClick = {
+                                nav.navigate("scan/${FileCategory.PHOTO.name}")
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CapacityBlue),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("Scan Chat Media") }
                     }
                 }
             }
@@ -670,7 +669,7 @@ fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
                 ) {
                     CuteNotificationBellIllustration(Modifier.size(96.dp))
                     Spacer(Modifier.height(12.dp))
-                    Text("No notifications recorded yet", color = Color(0xFF7A7F87))
+                    Text("No cached alerts in local vault", color = Color(0xFF7A7F87))
                 }
             } else {
                 LazyColumn(
@@ -679,7 +678,7 @@ fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
                 ) {
                     items(filtered, key = { it.id }) { n ->
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F9)),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {

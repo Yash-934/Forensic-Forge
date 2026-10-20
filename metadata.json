@@ -1,6 +1,8 @@
 {
-  "name": "Files Recovery — Photo & Video",
-  "description": "Android utility app for scanning and recovering deleted photos, videos, audio, and documents, with contacts backup, notification history, and storage tools.",
+  "name": "DeepVault Recovery",
+  "description": "Deep file carving and recovery utility for Android that restores deleted photos, videos, audio, documents, and contacts.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
