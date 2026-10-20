@@ -1,0 +1,6 @@
+{
+  "name": "Files Recovery — Photo & Video",
+  "description": "Android utility app for scanning and recovering deleted photos, videos, audio, and documents, with contacts backup, notification history, and storage tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

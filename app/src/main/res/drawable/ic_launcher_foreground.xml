@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer radar arc -->
+    <path
+        android:pathData="M30,44 A26,26 0 0,1 78,44"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeColor="#38BDF8"
+        android:fillColor="#00000000" />
+    <!-- Back vault card -->
+    <path
+        android:pathData="M31,37 L46,37 L51,42 L77,42 C80.3,42 83,44.7 83,48 L83,72 C83,75.3 80.3,78 77,78 L31,78 C27.7,78 25,75.3 25,72 L25,43 C25,39.7 27.7,37 31,37 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="25"
+                android:startY="37"
+                android:endX="83"
+                android:endY="78"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#6366F1" />
+                <item android:offset="1.0" android:color="#06B6D4" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Inner glowing data sheet -->
+    <path
+        android:fillColor="#E0F2FE"
+        android:pathData="M33,33 L65,33 C67.2,33 69,34.8 69,37 L69,46 L33,46 L33,37 C33,34.8 34.8,33 33,33 Z" />
+    <!-- Front glassmorphic shield plate -->
+    <path
+        android:pathData="M29,46 L79,46 C81.2,46 83,47.8 83,50 L83,72 C83,75.3 80.3,78 77,78 L31,78 C27.7,78 25,75.3 25,72 L25,50 C25,47.8 26.8,46 29,46 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="25"
+                android:startY="46"
+                android:endX="83"
+                android:endY="78"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#4F46E5" />
+                <item android:offset="1.0" android:color="#0891B2" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Central circular recovery badge -->
+    <path
+        android:fillColor="#0F172A"
+        android:pathData="M54,62m-12,0a12,12 0,1 1,24 0a12,12 0,1 1,-24 0" />
+    <!-- Upward recovery arrow in bright cyan-mint -->
+    <path
+        android:fillColor="#2DD4BF"
+        android:pathData="M54,53 L61,60 L56.8,60 L56.8,68 L51.2,68 L51.2,60 L47,60 Z" />
+</vector>

@@ -1,66 +1,607 @@
 package com.clone.filesrecovery.data
 
+import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
+import android.os.StatFs
 import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.RandomAccessFile
+import java.security.MessageDigest
 
 /**
- * Recovery scan engine.
+ * Deep Analysis & Maximum-Recovery File Engine.
  *
- * Android cannot truly "undelete" sectors without root, so — exactly like the
- * original app and every Play-Store recovery app — the scan walks the shared
- * storage (after the user grants All Files Access) and collects media/document
- * files that are still physically present but usually "lost" for the user:
- * hidden files, files in app folders, .nomedia folders, messaging-app caches,
- * trash folders, thumbnails' full-size partners, etc. Recover = copy them into
- * a visible public folder (Downloads/FilesRecovery).
+ * Combines 4 recovery layers:
+ *  1. Full recursive directory walk across all storage roots (including dot-folders,
+ *     .trashed-*, .thumbnails, MIUI/Samsung/ system recycle bins, LOST.DIR, app media caches).
+ *  2. Android MediaStore deep query with MATCH_TRASHED and MATCH_PENDING enabled.
+ *  3. Magic-Byte binary header inspection to recover extensionless, renamed, .tmp, .cache,
+ *     .bin, .dat, and compound-extension files (e.g., .pdf_2.png).
+ *  4. Embedded JPEG stream carving from .thumbdata* / thumbnail blob caches for deleted photos.
  */
 object FileScanner {
 
-    private val SKIP_DIRS = setOf("Android/data", "Android/obb")
-    private const val MAX_DEPTH = 14
+    private const val MAX_DEPTH = 25
+
+    private val DEEP_INSPECT_EXTS = setOf(
+        "", "tmp", "temp", "cache", "bin", "dat", "0", "1", "2", "bak", "old", "cnt", "thumb", "chck"
+    )
 
     suspend fun scan(
         context: Context,
         category: FileCategory,
-        onProgress: (scanned: Int, currentPath: String) -> Unit
+        onProgress: (scanned: Int, foundCount: Int, currentPath: String) -> Unit
     ): List<RecoverableFile> = withContext(Dispatchers.IO) {
-        val root = Environment.getExternalStorageDirectory()
+        val seenPaths = HashSet<String>()
         val results = ArrayList<RecoverableFile>()
         var scanned = 0
-        if (root != null && root.exists()) {
+
+        val carvedStagingDir = File(context.cacheDir, "deep_carved_${category.name.lowercase()}").apply {
+            mkdirs()
+        }
+
+        // Collect all accessible roots
+        val roots = LinkedHashSet<File>()
+        Environment.getExternalStorageDirectory()?.takeIf { it.exists() }?.let { roots.add(it) }
+        runCatching {
+            context.getExternalFilesDirs(null).filterNotNull().forEach { dir ->
+                var cur: File? = dir
+                while (cur != null && cur.name != "Android") {
+                    cur = cur.parentFile
+                }
+                cur?.parentFile?.takeIf { it.exists() && it.canRead() }?.let { roots.add(it) }
+            }
+        }
+
+        // Priority hidden/trash directories to ensure immediate deep scan coverage
+        val priorityDirs = listOf(
+            ".Trash", ".Trash-1000", ".recycle", ".globalTrash",
+            "DCIM/.thumbnails", "DCIM/.globalTrash", "Pictures/.thumbnails",
+            "Movies/.thumbnails", "MIUI/Gallery/cloud/.trashBin",
+            "LOST.DIR", "Download", "Bluetooth", "Android/media"
+        )
+        val primaryRoot = Environment.getExternalStorageDirectory()
+        if (primaryRoot != null) {
+            priorityDirs.forEach { rel ->
+                val d = File(primaryRoot, rel)
+                if (d.exists() && d.canRead()) roots.add(d)
+            }
+        }
+
+        fun recordFile(
+            file: File,
+            cat: FileCategory,
+            detectedExt: String,
+            forceHidden: Boolean = false,
+            origin: String = ""
+        ) {
+            val abs = file.absolutePath
+            if (!seenPaths.add(abs)) return
+            val length = file.length()
+            if (length <= 0L) return
+
+            val normalizedPath = abs.replace('\\', '/')
+            val isHidden = forceHidden ||
+                file.isHidden ||
+                file.name.startsWith(".") ||
+                file.name.contains(".trashed", ignoreCase = true) ||
+                file.name.contains("trash", ignoreCase = true) ||
+                normalizedPath.contains("/.") ||
+                normalizedPath.contains("/LOST.DIR/", ignoreCase = true) ||
+                normalizedPath.contains("/cache/", ignoreCase = true) ||
+                normalizedPath.contains("/thumbnails/", ignoreCase = true)
+
+            val originLabel = when {
+                origin.isNotEmpty() -> origin
+                file.name.startsWith(".trashed", ignoreCase = true) ||
+                    normalizedPath.contains("trash", ignoreCase = true) ||
+                    normalizedPath.contains("recycle", ignoreCase = true) -> "Recycle Bin"
+                normalizedPath.contains("thumbnail", ignoreCase = true) -> "Thumbnail Cache"
+                isHidden -> "Hidden Storage"
+                else -> "Deep Scan"
+            }
+
+            results += RecoverableFile(
+                path = abs,
+                name = file.name,
+                category = cat,
+                size = length,
+                lastModified = file.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis(),
+                isHiddenOrTrashed = isHidden,
+                recoveryOrigin = originLabel,
+                detectedExt = detectedExt
+            )
+        }
+
+        // Layer 1: Recursive File System + Magic Byte Inspection + .thumbdata Carving
+        for (root in roots) {
             root.walkTopDown()
                 .maxDepth(MAX_DEPTH)
                 .onEnter { dir ->
-                    val rel = dir.relativeTo(root).path.replace('\\', '/')
-                    SKIP_DIRS.none { rel == it || rel.startsWith("$it/") }
+                    dir.canRead() && dir.absolutePath != carvedStagingDir.absolutePath
                 }
                 .forEach { f ->
-                    if (f.isFile) {
-                        scanned++
-                        if (scanned % 40 == 0) onProgress(scanned, f.path)
-                        val cat = FileCategory.fromExtension(f.extension) ?: return@forEach
-                        if (cat == category && f.length() > 0) {
-                            results += RecoverableFile(
-                                path = f.absolutePath,
-                                name = f.name,
-                                category = cat,
-                                size = f.length(),
-                                lastModified = f.lastModified()
-                            )
+                    if (!f.isFile || !f.canRead()) return@forEach
+                    scanned++
+                    if (scanned % 15 == 0) {
+                        onProgress(scanned, results.size, f.absolutePath)
+                    }
+
+                    // Special case: carve embedded JPEGs from .thumbdata* files when scanning PHOTO
+                    if (category == FileCategory.PHOTO &&
+                        f.name.startsWith(".thumbdata", ignoreCase = true) &&
+                        f.length() > 4096L
+                    ) {
+                        val carved = carveThumbdataJpegs(f, carvedStagingDir, maxCount = 40)
+                        carved.forEach { cf ->
+                            recordFile(cf, FileCategory.PHOTO, "jpg", forceHidden = true, origin = "Carved Thumbnail")
+                        }
+                        return@forEach
+                    }
+
+                    val rawExt = f.extension.lowercase()
+                    val directCategory = FileCategory.fromExtension(rawExt)
+
+                    if (directCategory == category) {
+                        recordFile(f, category, rawExt)
+                    } else if (category == FileCategory.DOCUMENT &&
+                        (f.name.contains(".pdf_", ignoreCase = true) ||
+                            f.name.contains(".doc_", ignoreCase = true) ||
+                            f.name.startsWith(".trashed-", ignoreCase = true))
+                    ) {
+                        // Matches compound document cache files like "और देशांतर.pdf_2.png" or ".trashed-...zip"
+                        val inferredExt = when {
+                            f.name.endsWith(".zip", true) -> "zip"
+                            f.name.endsWith(".apk", true) -> "apk"
+                            f.name.contains(".pdf", true) -> "pdf"
+                            else -> rawExt.ifBlank { "pdf" }
+                        }
+                        if (directCategory == null || directCategory == FileCategory.DOCUMENT || f.name.contains(".pdf_", true)) {
+                            recordFile(f, FileCategory.DOCUMENT, inferredExt, forceHidden = true)
+                        }
+                    } else if (rawExt in DEEP_INSPECT_EXTS || f.name.startsWith(".trashed", ignoreCase = true)) {
+                        // Layer 3: Magic-byte header signature detection
+                        val sig = detectByMagicBytes(f)
+                        if (sig != null && sig.first == category) {
+                            recordFile(f, sig.first, sig.second, forceHidden = true, origin = "Header Signature")
                         }
                     }
                 }
         }
-        onProgress(scanned, "")
-        results.sortedByDescending { it.lastModified }
+
+        // Layer 2: MediaStore query with MATCH_TRASHED & MATCH_PENDING
+        runCatching {
+            queryMediaStoreDeep(context, category).forEach { item ->
+                if (seenPaths.add(item.path)) {
+                    scanned++
+                    results += item
+                    onProgress(scanned, results.size, item.path)
+                }
+            }
+        }
+
+        // Ensure smooth visual scan experience if storage was small
+        if (scanned < 30) {
+            onProgress(scanned, results.size, "/storage/emulated/0/Download")
+            delay(350)
+        }
+        onProgress(scanned, results.size, "")
+
+        // Sort: Hidden/Trashed and newest files first
+        results.sortedWith(
+            compareByDescending<RecoverableFile> { it.lastModified }
+                .thenByDescending { it.isHiddenOrTrashed }
+        )
+    }
+
+    /**
+     * Builds the folder list shown on the Category Folder Breakdown screen
+     * (Screenshots 7 & 11: "Hidden Files", "All", and each parent folder).
+     */
+    fun buildFolderBuckets(category: FileCategory, files: List<RecoverableFile>): List<FolderBucket> {
+        if (files.isEmpty()) return emptyList()
+        val buckets = ArrayList<FolderBucket>()
+
+        val hiddenFiles = files.filter { it.isHiddenOrTrashed }
+        if (category == FileCategory.DOCUMENT || hiddenFiles.isNotEmpty()) {
+            if (hiddenFiles.isNotEmpty()) {
+                buckets += FolderBucket(
+                    id = "__HIDDEN__",
+                    title = "Hidden Files",
+                    files = hiddenFiles,
+                    isHiddenBucket = true
+                )
+            }
+        }
+
+        buckets += FolderBucket(
+            id = "__ALL__",
+            title = "All",
+            files = files,
+            isAllBucket = true
+        )
+
+        val byFolder = files.groupBy { it.folderName }
+        // Sort folders so dot-folders (like .BBKLauncher2, .MoonReader, .kivy) or common folders appear nicely
+        val sortedEntries = byFolder.entries.sortedWith(
+            compareBy<Map.Entry<String, List<RecoverableFile>>> {
+                when {
+                    category == FileCategory.DOCUMENT && it.key.startsWith(".") -> 0
+                    category == FileCategory.DOCUMENT && it.key.firstOrNull()?.isDigit() == true -> 1
+                    else -> 2
+                }
+            }.thenBy { it.key.lowercase() }
+        )
+
+        for ((folderName, folderFiles) in sortedEntries) {
+            buckets += FolderBucket(
+                id = "folder:$folderName",
+                title = folderName,
+                files = folderFiles
+            )
+        }
+        return buckets
+    }
+
+    /**
+     * Reads first 32 bytes of a file to identify its real format even if the extension was stripped or changed.
+     */
+    private fun detectByMagicBytes(file: File): Pair<FileCategory, String>? = runCatching {
+        if (file.length() < 12L) return null
+        val header = ByteArray(32)
+        val read = file.inputStream().use { it.read(header) }
+        if (read < 8) return null
+
+        fun b(i: Int): Int = header[i].toInt() and 0xFF
+
+        // JPEG: FF D8 FF
+        if (b(0) == 0xFF && b(1) == 0xD8 && b(2) == 0xFF) {
+            return FileCategory.PHOTO to "jpg"
+        }
+        // PNG: 89 50 4E 47
+        if (b(0) == 0x89 && b(1) == 0x50 && b(2) == 0x4E && b(3) == 0x47) {
+            return FileCategory.PHOTO to "png"
+        }
+        // GIF: 47 49 46 38
+        if (b(0) == 0x47 && b(1) == 0x49 && b(2) == 0x46 && b(3) == 0x38) {
+            return FileCategory.PHOTO to "gif"
+        }
+        // RIFF container (WEBP, WAV, AVI)
+        if (b(0) == 0x52 && b(1) == 0x49 && b(2) == 0x46 && b(3) == 0x46 && read >= 12) {
+            val tag = String(header, 8, 4, Charsets.US_ASCII)
+            when (tag) {
+                "WEBP" -> return FileCategory.PHOTO to "webp"
+                "WAVE" -> return FileCategory.AUDIO to "wav"
+                "AVI " -> return FileCategory.VIDEO to "avi"
+            }
+        }
+        // ISO Base Media File Format (ftyp at offset 4: MP4, MOV, 3GP, M4A, HEIC, AVIF)
+        if (read >= 12 && b(4) == 0x66 && b(5) == 0x74 && b(6) == 0x79 && b(7) == 0x70) {
+            val brand = String(header, 8, 4, Charsets.US_ASCII).lowercase()
+            return when {
+                brand.startsWith("hei") || brand.startsWith("mif") || brand.startsWith("avi") ->
+                    FileCategory.PHOTO to "heic"
+                brand.startsWith("m4a") || brand.startsWith("m4b") ->
+                    FileCategory.AUDIO to "m4a"
+                else -> FileCategory.VIDEO to "mp4"
+            }
+        }
+        // MKV / WebM: 1A 45 DF A3
+        if (b(0) == 0x1A && b(1) == 0x45 && b(2) == 0xDF && b(3) == 0xA3) {
+            return FileCategory.VIDEO to "mkv"
+        }
+        // MP3: ID3 (49 44 33) or MPEG sync (FF FB / FF F3 / FF F2)
+        if ((b(0) == 0x49 && b(1) == 0x44 && b(2) == 0x33) ||
+            (b(0) == 0xFF && (b(1) == 0xFB || b(1) == 0xF3 || b(1) == 0xF2))
+        ) {
+            return FileCategory.AUDIO to "mp3"
+        }
+        // FLAC: fLaC (66 4C 61 43)
+        if (b(0) == 0x66 && b(1) == 0x4C && b(2) == 0x61 && b(3) == 0x43) {
+            return FileCategory.AUDIO to "flac"
+        }
+        // OGG / OPUS: OggS (4F 67 67 53)
+        if (b(0) == 0x4F && b(1) == 0x67 && b(2) == 0x67 && b(3) == 0x53) {
+            return FileCategory.AUDIO to "ogg"
+        }
+        // AMR: #!AMR (23 21 41 4D 52)
+        if (b(0) == 0x23 && b(1) == 0x21 && b(2) == 0x41 && b(3) == 0x4D && b(4) == 0x52) {
+            return FileCategory.AUDIO to "amr"
+        }
+        // PDF: %PDF (25 50 44 46)
+        if (b(0) == 0x25 && b(1) == 0x50 && b(2) == 0x44 && b(3) == 0x46) {
+            return FileCategory.DOCUMENT to "pdf"
+        }
+        // ZIP / APK / DOCX / XLSX / PPTX: 50 4B 03 04
+        if (b(0) == 0x50 && b(1) == 0x4B && b(2) == 0x03 && b(3) == 0x04) {
+            val lower = file.name.lowercase()
+            val ext = when {
+                lower.contains("apk") -> "apk"
+                lower.contains("xls") -> "xlsx"
+                lower.contains("doc") -> "docx"
+                lower.contains("ppt") -> "pptx"
+                else -> "zip"
+            }
+            return FileCategory.DOCUMENT to ext
+        }
+        // RAR: 52 61 72 21
+        if (b(0) == 0x52 && b(1) == 0x61 && b(2) == 0x72 && b(3) == 0x21) {
+            return FileCategory.DOCUMENT to "rar"
+        }
+        // 7Z: 37 7A BC AF
+        if (b(0) == 0x37 && b(1) == 0x7A && b(2) == 0xBC && b(3) == 0xAF) {
+            return FileCategory.DOCUMENT to "7z"
+        }
+        // OLE2 Compound Document (DOC, XLS, PPT): D0 CF 11 E0
+        if (b(0) == 0xD0 && b(1) == 0xCF && b(2) == 0x11 && b(3) == 0xE0) {
+            return FileCategory.DOCUMENT to "doc"
+        }
+        null
+    }.getOrNull()
+
+    /**
+     * Carves embedded JPEG images (FF D8 FF ... FF D9) out of Android .thumbdata* blob files.
+     */
+    private fun carveThumbdataJpegs(
+        thumbFile: File,
+        outDir: File,
+        maxCount: Int
+    ): List<File> = runCatching {
+        val carved = ArrayList<File>()
+        val maxReadBytes = minOf(thumbFile.length(), 16L * 1024 * 1024).toInt()
+        val buf = ByteArray(maxReadBytes)
+        RandomAccessFile(thumbFile, "r").use { raf ->
+            raf.readFully(buf, 0, maxReadBytes)
+        }
+        var i = 0
+        while (i < maxReadBytes - 4 && carved.size < maxCount) {
+            if ((buf[i].toInt() and 0xFF) == 0xFF &&
+                (buf[i + 1].toInt() and 0xFF) == 0xD8 &&
+                (buf[i + 2].toInt() and 0xFF) == 0xFF
+            ) {
+                var end = i + 3
+                val limit = minOf(maxReadBytes - 1, i + 2 * 1024 * 1024)
+                while (end < limit) {
+                    if ((buf[end].toInt() and 0xFF) == 0xFF &&
+                        (buf[end + 1].toInt() and 0xFF) == 0xD9
+                    ) {
+                        val length = (end + 2) - i
+                        if (length in 4096..(2 * 1024 * 1024)) {
+                            val outFile = File(outDir, "carved_${thumbFile.name}_${carved.size + 1}.jpg")
+                            if (!outFile.exists()) {
+                                outFile.writeBytes(buf.copyOfRange(i, end + 2))
+                            }
+                            carved += outFile
+                        }
+                        i = end + 2
+                        break
+                    }
+                    end++
+                }
+            }
+            i++
+        }
+        carved
+    }.getOrDefault(emptyList())
+
+    /**
+     * Queries MediaStore including trashed and pending items on Android 11+.
+     */
+    private fun queryMediaStoreDeep(context: Context, category: FileCategory): List<RecoverableFile> {
+        val list = ArrayList<RecoverableFile>()
+        val uri = MediaStore.Files.getContentUri("external")
+        val projection = arrayOf(
+            MediaStore.MediaColumns.DATA,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_MODIFIED
+        )
+        val cursor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val args = Bundle().apply {
+                putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
+                putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+            }
+            context.contentResolver.query(uri, projection, args, null)
+        } else {
+            context.contentResolver.query(uri, projection, null, null, null)
+        }
+
+        cursor?.use { c ->
+            val dataIdx = c.getColumnIndex(MediaStore.MediaColumns.DATA)
+            val nameIdx = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+            val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
+            val dateIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+            while (c.moveToNext()) {
+                val path = if (dataIdx >= 0) c.getString(dataIdx) else null
+                if (path.isNullOrBlank()) continue
+                val f = File(path)
+                if (!f.exists() || f.length() <= 0L) continue
+                val name = (if (nameIdx >= 0) c.getString(nameIdx) else null) ?: f.name
+                val ext = name.substringAfterLast('.', f.extension).lowercase()
+                val cat = FileCategory.fromExtension(ext) ?: continue
+                if (cat != category) continue
+                val size = if (sizeIdx >= 0) c.getLong(sizeIdx).takeIf { it > 0 } ?: f.length() else f.length()
+                val modSec = if (dateIdx >= 0) c.getLong(dateIdx) else 0L
+                val lastMod = if (modSec > 0) modSec * 1000L else f.lastModified()
+                val isHidden = name.startsWith(".") || path.contains("/.") || name.contains("trashed", true)
+                list += RecoverableFile(
+                    path = f.absolutePath,
+                    name = name,
+                    category = category,
+                    size = size,
+                    lastModified = lastMod,
+                    isHiddenOrTrashed = isHidden,
+                    recoveryOrigin = if (isHidden) "Trash / Hidden" else "MediaStore",
+                    detectedExt = ext
+                )
+            }
+        }
+        return list
+    }
+
+    /**
+     * Computes real device capacity & category breakdown for the Home Screen Capacity card.
+     */
+    suspend fun getStorageBreakdown(context: Context): StorageBreakdown = withContext(Dispatchers.IO) {
+        val statPath = Environment.getExternalStorageDirectory() ?: Environment.getDataDirectory()
+        val stat = StatFs(statPath.path)
+        val total = stat.blockCountLong * stat.blockSizeLong
+        val free = stat.availableBlocksLong * stat.blockSizeLong
+        val used = (total - free).coerceAtLeast(0L)
+
+        var photos = 0L
+        var videos = 0L
+        var docs = 0L
+        var audios = 0L
+
+        runCatching {
+            val root = Environment.getExternalStorageDirectory()
+            if (root != null && root.exists() && root.canRead()) {
+                root.walkTopDown().maxDepth(10).forEach { f ->
+                    if (!f.isFile) return@forEach
+                    val len = f.length()
+                    when (FileCategory.fromExtension(f.extension)) {
+                        FileCategory.PHOTO -> photos += len
+                        FileCategory.VIDEO -> videos += len
+                        FileCategory.DOCUMENT -> docs += len
+                        FileCategory.AUDIO -> audios += len
+                        null -> {}
+                    }
+                }
+            }
+        }
+
+        val mediaSum = photos + videos + docs + audios
+        val others = (used - mediaSum).coerceAtLeast(0L)
+        StorageBreakdown(
+            totalBytes = total,
+            usedBytes = used,
+            photosBytes = photos,
+            videosBytes = videos,
+            documentsBytes = docs,
+            audiosBytes = audios,
+            othersBytes = others
+        )
+    }
+
+    /**
+     * Finds duplicate & visually similar images using perceptual 8x8 luminance hashing + size/MD5 matching.
+     */
+    suspend fun findSimilarImages(context: Context): List<SimilarImageGroup> = withContext(Dispatchers.IO) {
+        val allPhotos = scan(context, FileCategory.PHOTO) { _, _, _ -> }
+        val exactByHash = LinkedHashMap<String, MutableList<RecoverableFile>>()
+        val byPerceptualHash = LinkedHashMap<Long, MutableList<RecoverableFile>>()
+
+        for (photo in allPhotos.take(600)) {
+            val f = File(photo.path)
+            if (!f.exists() || f.length() < 4096L) continue
+            val md5Key = "${f.length()}:${md5Head(f)}"
+            exactByHash.getOrPut(md5Key) { ArrayList() }.add(photo)
+
+            val aHash = computeAverageHash(f)
+            if (aHash != null) {
+                // Find existing bucket within Hamming distance <= 5
+                val matchingKey = byPerceptualHash.keys.firstOrNull {
+                    java.lang.Long.bitCount(it xor aHash) <= 5
+                } ?: aHash
+                byPerceptualHash.getOrPut(matchingKey) { ArrayList() }.add(photo)
+            }
+        }
+
+        val groups = ArrayList<SimilarImageGroup>()
+        val usedPaths = HashSet<String>()
+        var idx = 1
+
+        for ((_, list) in exactByHash) {
+            if (list.size > 1) {
+                list.forEach { usedPaths.add(it.path) }
+                groups += SimilarImageGroup(
+                    id = "exact_$idx",
+                    title = "Duplicate Set #${idx++}",
+                    files = list
+                )
+            }
+        }
+        for ((_, list) in byPerceptualHash) {
+            val remaining = list.filter { it.path !in usedPaths }
+            if (remaining.size > 1) {
+                remaining.forEach { usedPaths.add(it.path) }
+                groups += SimilarImageGroup(
+                    id = "sim_$idx",
+                    title = "Similar Photos #${idx++}",
+                    files = remaining
+                )
+            }
+        }
+        groups
+    }
+
+    private fun computeAverageHash(file: File): Long? = runCatching {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.path, opts)
+        if (opts.outWidth <= 0 || opts.outHeight <= 0) return null
+        var sample = 1
+        while (opts.outWidth / (sample * 2) >= 16 && opts.outHeight / (sample * 2) >= 16) {
+            sample *= 2
+        }
+        val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val raw = BitmapFactory.decodeFile(file.path, decodeOpts) ?: return null
+        val scaled = Bitmap.createScaledBitmap(raw, 8, 8, true)
+        if (scaled != raw) raw.recycle()
+        val lum = IntArray(64)
+        var sum = 0
+        for (y in 0 until 8) {
+            for (x in 0 until 8) {
+                val p = scaled.getPixel(x, y)
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                val l = (r * 30 + g * 59 + b * 11) / 100
+                lum[y * 8 + x] = l
+                sum += l
+            }
+        }
+        scaled.recycle()
+        val avg = sum / 64
+        var hash = 0L
+        for (i in 0 until 64) {
+            if (lum[i] >= avg) {
+                hash = hash or (1L shl i)
+            }
+        }
+        hash
+    }.getOrNull()
+
+    fun md5Head(f: File): String = runCatching {
+        val md = MessageDigest.getInstance("MD5")
+        f.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            val read = input.read(buf)
+            if (read > 0) md.update(buf, 0, read)
+        }
+        md.digest().joinToString("") { "%02x".format(it) }
+    }.getOrDefault("")
+
+    /**
+     * Finds all screenshots on device for the Screenshot Cleaner screen.
+     */
+    suspend fun findScreenshots(context: Context): List<RecoverableFile> = withContext(Dispatchers.IO) {
+        val allPhotos = scan(context, FileCategory.PHOTO) { _, _, _ -> }
+        allPhotos.filter {
+            it.path.contains("/Screenshots/", ignoreCase = true) ||
+                it.name.contains("screenshot", ignoreCase = true)
+        }
     }
 
     /** Copy selected files into the public FilesRecovery folder and record history. */
@@ -70,12 +611,12 @@ object FileScanner {
             for (item in files) {
                 val src = File(item.path)
                 if (!src.exists()) continue
-                val savedPath = copyToPublicFolder(context, src, item.category)
+                val savedPath = copyToPublicFolder(context, src, item)
                 if (savedPath != null) {
                     done += RecoveredRecord(
                         originalPath = item.path,
                         recoveredPath = savedPath,
-                        name = item.name,
+                        name = ensureExtension(item),
                         category = item.category,
                         size = item.size,
                         recoveredAt = System.currentTimeMillis()
@@ -86,7 +627,20 @@ object FileScanner {
             done
         }
 
-    private fun copyToPublicFolder(context: Context, src: File, category: FileCategory): String? {
+    private fun ensureExtension(item: RecoverableFile): String {
+        val base = item.name.removePrefix(".trashed-").let {
+            // Strip Android ".trashed-1795080123-" prefix when restoring so recovered file has clean name
+            val dashIdx = it.indexOf('-')
+            if (item.name.startsWith(".trashed-") && dashIdx > 0) it.substring(dashIdx + 1) else item.name
+        }
+        if (base.contains('.')) return base
+        val ext = item.extension
+        return if (ext.isNotBlank()) "$base.$ext" else base
+    }
+
+    private fun copyToPublicFolder(context: Context, src: File, item: RecoverableFile): String? {
+        val category = item.category
+        val cleanName = ensureExtension(item)
         val folderName = "FilesRecovery/" + category.title
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val collection = when (category) {
@@ -102,11 +656,11 @@ object FileScanner {
                 FileCategory.DOCUMENT -> Environment.DIRECTORY_DOWNLOADS + "/" + folderName
             }
             val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, uniqueName(context, collection, src.name))
+                put(MediaStore.MediaColumns.DISPLAY_NAME, cleanName)
                 put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
-            val resolver = context.contentResolver
+            val resolver: ContentResolver = context.contentResolver
             var uri: Uri? = null
             runCatching {
                 uri = resolver.insert(collection, values)
@@ -116,8 +670,11 @@ object FileScanner {
                     values.put(MediaStore.MediaColumns.IS_PENDING, 0)
                     resolver.update(u, values, null, null)
                 }
-            }.onFailure { uri?.let { runCatching { resolver.delete(it, null, null) } }; return null }
-            uri?.let { relativePath + "/" + src.name }
+            }.onFailure {
+                uri?.let { runCatching { resolver.delete(it, null, null) } }
+                return null
+            }
+            uri?.let { "$relativePath/$cleanName" }
         } else {
             @Suppress("DEPRECATION")
             val base = Environment.getExternalStoragePublicDirectory(
@@ -129,14 +686,14 @@ object FileScanner {
                 }
             )
             val dir = File(base, folderName).apply { mkdirs() }
-            val dest = File(dir, src.name).let { if (it.exists()) File(dir, "${System.currentTimeMillis()}_${src.name}") else it }
-            runCatching { src.inputStream().use { i -> dest.outputStream().use { o -> i.copyTo(o) } }; dest.absolutePath }.getOrNull()
+            val dest = File(dir, cleanName).let {
+                if (it.exists()) File(dir, "${System.currentTimeMillis()}_$cleanName") else it
+            }
+            runCatching {
+                src.inputStream().use { i -> dest.outputStream().use { o -> i.copyTo(o) } }
+                dest.absolutePath
+            }.getOrNull()
         }
-    }
-
-    private fun uniqueName(context: Context, collection: Uri, name: String): String {
-        // MediaStore renames duplicates automatically on most devices; keep the name as-is.
-        return name
     }
 
     fun videoDurationMs(path: String): Long = runCatching {

@@ -10,29 +10,34 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -47,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -56,15 +62,353 @@ import androidx.navigation.NavController
 import com.clone.filesrecovery.AppViewModel
 import com.clone.filesrecovery.data.ContactsHelper
 import com.clone.filesrecovery.data.FileCategory
+import com.clone.filesrecovery.data.FileScanner
+import com.clone.filesrecovery.data.RecoverableFile
+import com.clone.filesrecovery.data.SimilarImageGroup
 import com.clone.filesrecovery.data.formatDate
 import com.clone.filesrecovery.data.formatSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.security.MessageDigest
 
-// ---------------- Contacts backup / restore ----------------
+// ---------------- Similar Images Screen ----------------
+
+@Composable
+fun SimilarImagesScreen(nav: NavController, vm: AppViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var scanning by remember { mutableStateOf(true) }
+    var groups by remember { mutableStateOf<List<SimilarImageGroup>>(emptyList()) }
+    var selectedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    LaunchedEffect(Unit) {
+        scanning = true
+        val found = FileScanner.findSimilarImages(context)
+        groups = found
+        // Auto-select all except the first photo in each duplicate group
+        selectedPaths = found.flatMap { it.files.drop(1).map { f -> f.path } }.toSet()
+        scanning = false
+    }
+
+    SimpleScaffold(
+        title = "Similar Images",
+        onBack = { nav.popBackStack() },
+        warmBackground = true,
+        bottomBar = {
+            if (selectedPaths.isNotEmpty()) {
+                val totalBytes = groups.flatMap { it.files }
+                    .filter { selectedPaths.contains(it.path) }
+                    .sumOf { it.size }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                var deleted = 0
+                                withContext(Dispatchers.IO) {
+                                    selectedPaths.forEach { p ->
+                                        if (File(p).delete()) deleted++
+                                    }
+                                }
+                                Toast.makeText(context, "Cleaned $deleted duplicate photos", Toast.LENGTH_SHORT).show()
+                                val updated = FileScanner.findSimilarImages(context)
+                                groups = updated
+                                selectedPaths = emptySet()
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            "Clean (${selectedPaths.size} • ${formatSize(totalBytes)})",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    ) { mod ->
+        if (scanning) {
+            Column(
+                mod.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                CircularProgressIndicator(color = PrimaryGreen, modifier = Modifier.size(56.dp))
+                Spacer(Modifier.height(16.dp))
+                Text("Analyzing similar & duplicate photos…", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            }
+        } else if (groups.isEmpty()) {
+            Column(
+                mod.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                CuteSimilarImagesIllustration(Modifier.size(110.dp))
+                Spacer(Modifier.height(16.dp))
+                Text("No duplicate or similar photos found", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Your gallery has no redundant copies.", color = Color(0xFF7A7F87), fontSize = 14.sp)
+            }
+        } else {
+            LazyColumn(
+                mod.fillMaxSize().padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(vertical = 12.dp)
+            ) {
+                items(groups, key = { it.id }) { group ->
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F9)),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "${group.title} (${group.files.size})",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                )
+                                Text(
+                                    formatSize(group.files.sumOf { it.size }),
+                                    color = Color(0xFF7A7F87),
+                                    fontSize = 13.sp
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            val rows = group.files.chunked(3)
+                            rows.forEach { rowFiles ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    rowFiles.forEach { file ->
+                                        val isChecked = selectedPaths.contains(file.path)
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .aspectRatio(1f)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable {
+                                                    vm.currentFile = file
+                                                    nav.navigate("detail")
+                                                }
+                                        ) {
+                                            FileThumb(file, Modifier.fillMaxSize())
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .padding(6.dp)
+                                            ) {
+                                                RoundCheckButton(
+                                                    checked = isChecked,
+                                                    onToggle = {
+                                                        selectedPaths = if (isChecked) {
+                                                            selectedPaths - file.path
+                                                        } else {
+                                                            selectedPaths + file.path
+                                                        }
+                                                    },
+                                                    size = 22.dp
+                                                )
+                                            }
+                                        }
+                                    }
+                                    repeat(3 - rowFiles.size) {
+                                        Spacer(Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------- Screenshot Cleaner Screen ----------------
+
+@Composable
+fun ScreenshotCleanerScreen(nav: NavController, vm: AppViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var scanning by remember { mutableStateOf(true) }
+    var screenshots by remember { mutableStateOf<List<RecoverableFile>>(emptyList()) }
+    var selectedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    LaunchedEffect(Unit) {
+        scanning = true
+        val list = FileScanner.findScreenshots(context)
+        screenshots = list
+        selectedPaths = list.map { it.path }.toSet()
+        scanning = false
+    }
+
+    val allSelected = screenshots.isNotEmpty() && screenshots.all { selectedPaths.contains(it.path) }
+
+    SimpleScaffold(
+        title = "Screenshot Cleaner",
+        onBack = { nav.popBackStack() },
+        warmBackground = true,
+        bottomBar = {
+            if (selectedPaths.isNotEmpty()) {
+                val totalBytes = screenshots.filter { selectedPaths.contains(it.path) }.sumOf { it.size }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                var deleted = 0
+                                withContext(Dispatchers.IO) {
+                                    selectedPaths.forEach { p ->
+                                        if (File(p).delete()) deleted++
+                                    }
+                                }
+                                Toast.makeText(context, "Cleaned $deleted screenshots", Toast.LENGTH_SHORT).show()
+                                screenshots = FileScanner.findScreenshots(context)
+                                selectedPaths = emptySet()
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            "Clean (${selectedPaths.size} • ${formatSize(totalBytes)})",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    ) { mod ->
+        if (scanning) {
+            Column(
+                mod.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                CircularProgressIndicator(color = PrimaryGreen, modifier = Modifier.size(56.dp))
+                Spacer(Modifier.height(16.dp))
+                Text("Scanning screenshots…", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            }
+        } else if (screenshots.isEmpty()) {
+            Column(
+                mod.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                CuteScreenshotFrameIllustration(Modifier.size(110.dp))
+                Spacer(Modifier.height(14.dp))
+                Text("No screenshots found", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            }
+        } else {
+            Column(mod.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RoundCheckButton(
+                        checked = allSelected,
+                        onToggle = {
+                            selectedPaths = if (allSelected) emptySet() else screenshots.map { it.path }.toSet()
+                        }
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text("Select all (${screenshots.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+
+                val rows = screenshots.chunked(3)
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp)
+                ) {
+                    items(rows, key = { it.first().path }) { rowFiles ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            rowFiles.forEach { file ->
+                                val isChecked = selectedPaths.contains(file.path)
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            vm.currentFile = file
+                                            nav.navigate("detail")
+                                        }
+                                ) {
+                                    FileThumb(file, Modifier.fillMaxSize())
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(6.dp)
+                                    ) {
+                                        RoundCheckButton(
+                                            checked = isChecked,
+                                            onToggle = {
+                                                selectedPaths = if (isChecked) {
+                                                    selectedPaths - file.path
+                                                } else {
+                                                    selectedPaths + file.path
+                                                }
+                                            },
+                                            size = 22.dp
+                                        )
+                                    }
+                                    Text(
+                                        text = formatSize(file.size),
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomStart)
+                                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(topEnd = 6.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            repeat(3 - rowFiles.size) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------- Contacts Recovery / Backup ----------------
 
 @Composable
 fun ContactsScreen(nav: NavController, vm: AppViewModel) {
@@ -88,7 +432,7 @@ fun ContactsScreen(nav: NavController, vm: AppViewModel) {
         if (uri != null) {
             scope.launch {
                 val count = ContactsHelper.importVcf(context, uri)
-                Toast.makeText(context, "Imported $count contacts", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Restored $count contacts", Toast.LENGTH_LONG).show()
                 vm.loadContacts()
             }
         }
@@ -96,11 +440,18 @@ fun ContactsScreen(nav: NavController, vm: AppViewModel) {
     LaunchedEffect(granted) { if (granted) vm.loadContacts() }
 
     SimpleScaffold(
-        title = "Contacts Backup (${contacts.size})",
+        title = "Contacts Recovery",
         onBack = { nav.popBackStack() },
+        warmBackground = true,
         bottomBar = {
             if (granted) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     Button(
                         onClick = {
                             scope.launch {
@@ -112,16 +463,20 @@ fun ContactsScreen(nav: NavController, vm: AppViewModel) {
                                 ).show()
                             }
                         },
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BrandViolet),
-                        shape = RoundedCornerShape(12.dp)
-                    ) { Text("Backup (.vcf)") }
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                        shape = RoundedCornerShape(50)
+                    ) { Text("Backup (.vcf)", fontWeight = FontWeight.Bold) }
                     Button(
                         onClick = { pickVcf.launch(arrayOf("text/vcard", "text/x-vcard", "*/*")) },
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
-                        shape = RoundedCornerShape(12.dp)
-                    ) { Text("Restore") }
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = CapacityBlue),
+                        shape = RoundedCornerShape(50)
+                    ) { Text("Restore VCF", fontWeight = FontWeight.Bold) }
                 }
             }
         }
@@ -132,37 +487,91 @@ fun ContactsScreen(nav: NavController, vm: AppViewModel) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Icon(Icons.Filled.Contacts, contentDescription = null, tint = BrandViolet, modifier = Modifier.size(64.dp))
-                Spacer(Modifier.height(12.dp))
-                Text("Contacts permission needed", fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = {
-                    permLauncher.launch(
-                        arrayOf(
-                            android.Manifest.permission.READ_CONTACTS,
-                            android.Manifest.permission.WRITE_CONTACTS
+                CuteRedPhoneIllustration(Modifier.size(96.dp))
+                Spacer(Modifier.height(16.dp))
+                Text("Contacts Permission Required", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Grant permission to scan for deleted RawContacts, VCF backups, and active contacts.",
+                    color = Color(0xFF7A7F87),
+                    fontSize = 14.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                Button(
+                    onClick = {
+                        permLauncher.launch(
+                            arrayOf(
+                                android.Manifest.permission.READ_CONTACTS,
+                                android.Manifest.permission.WRITE_CONTACTS
+                            )
                         )
-                    )
-                }) { Text("Grant Permission") }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                ) { Text("Grant Permission", fontWeight = FontWeight.Bold) }
             }
         } else if (contacts.isEmpty()) {
             Column(
                 mod.fillMaxSize().padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
-            ) { Text("No contacts found", color = Color.Gray) }
+            ) {
+                CuteRedPhoneIllustration(Modifier.size(96.dp))
+                Spacer(Modifier.height(12.dp))
+                Text("No contacts found", color = Color(0xFF7A7F87))
+            }
         } else {
-            LazyColumn(mod.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(
+                mod.fillMaxSize().padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(vertical = 12.dp)
+            ) {
                 items(contacts, key = { it.id }) { c ->
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F9)),
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text(c.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                            c.phones.forEach { Text(it, color = Color.Gray, fontSize = 13.sp) }
-                            c.emails.forEach { Text(it, color = Color.Gray, fontSize = 13.sp) }
+                        Row(
+                            Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(c.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    if (c.isDeletedOrBackup) {
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = c.sourceLabel,
+                                            fontSize = 11.sp,
+                                            color = CoralRed,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                                c.phones.forEach { Text(it, color = Color(0xFF666B75), fontSize = 13.sp) }
+                                c.emails.forEach { Text(it, color = Color(0xFF666B75), fontSize = 13.sp) }
+                            }
+                            if (c.isDeletedOrBackup) {
+                                Button(
+                                    onClick = {
+                                        scope.launch {
+                                            val ok = ContactsHelper.restoreContact(context, c)
+                                            Toast.makeText(
+                                                context,
+                                                if (ok) "Recovered ${c.name}" else "Failed to restore",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            vm.loadContacts()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                                    shape = RoundedCornerShape(50)
+                                ) {
+                                    Text("Recover", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
                 }
@@ -171,7 +580,7 @@ fun ContactsScreen(nav: NavController, vm: AppViewModel) {
     }
 }
 
-// ---------------- Notification recovery ----------------
+// ---------------- Notification Cleaner / Recovery ----------------
 
 private fun isListenerEnabled(context: android.content.Context): Boolean {
     val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: return false
@@ -183,8 +592,11 @@ fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
     val context = LocalContext.current
     val notifications by vm.notifications.collectAsState()
     var enabled by remember { mutableStateOf(isListenerEnabled(context)) }
-    var tab by remember { mutableStateOf(0) } // 0 all, 1 media, 2 message
-    LaunchedEffect(Unit) { vm.loadNotifications(); enabled = isListenerEnabled(context) }
+    var tab by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        vm.loadNotifications()
+        enabled = isListenerEnabled(context)
+    }
 
     val filtered = when (tab) {
         1 -> notifications.filter { it.isMedia }
@@ -193,12 +605,13 @@ fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
     }
 
     SimpleScaffold(
-        title = "Notification Recovery",
+        title = "Notification Cleaner",
         onBack = { nav.popBackStack() },
+        warmBackground = true,
         actions = {
             if (notifications.isNotEmpty()) {
-                androidx.compose.material3.IconButton(onClick = { vm.clearNotifications() }) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Clear all")
+                IconButton(onClick = { vm.clearNotifications() }) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Clear all", tint = Color(0xFF222222))
                 }
             }
         }
@@ -206,35 +619,46 @@ fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
         Column(mod.fillMaxSize()) {
             if (!enabled) {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().padding(12.dp)
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F9)),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
                 ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("Notification access is OFF", fontWeight = FontWeight.Bold)
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Notification Access Needed", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Spacer(Modifier.height(4.dp))
                         Text(
-                            "Turn it on so deleted messages/notifications can be recorded and read here later.",
-                            color = Color.Gray, fontSize = 13.sp
+                            "Enable notification listener access to capture and clean incoming & deleted notifications.",
+                            color = Color(0xFF666B75),
+                            fontSize = 13.sp
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                context.startActivity(
-                                    Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = BrandOrange)
-                        ) { Text("Open Settings") }
-                        Button(
-                            onClick = { enabled = isListenerEnabled(context); vm.loadNotifications() },
-                            colors = ButtonDefaults.buttonColors(containerColor = BrandViolet)
-                        ) { Text("I enabled it — Refresh") }
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(
+                                onClick = {
+                                    context.startActivity(
+                                        Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                                shape = RoundedCornerShape(50)
+                            ) { Text("Enable Access", fontWeight = FontWeight.Bold) }
+                            Button(
+                                onClick = {
+                                    enabled = isListenerEnabled(context)
+                                    vm.loadNotifications()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = CapacityBlue),
+                                shape = RoundedCornerShape(50)
+                            ) { Text("Refresh") }
+                        }
                     }
                 }
             }
-            TabRow(selectedTabIndex = tab) {
-                listOf("All", "Media", "Message").forEachIndexed { i, label ->
+            TabRow(selectedTabIndex = tab, containerColor = Color.White) {
+                listOf("All", "Media", "Messages").forEachIndexed { i, label ->
                     Tab(selected = tab == i, onClick = { tab = i }, text = { Text(label) })
                 }
             }
@@ -244,26 +668,29 @@ fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(Icons.Filled.Notifications, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(56.dp))
-                    Spacer(Modifier.height(10.dp))
-                    Text("No notifications recorded yet", color = Color.Gray)
+                    CuteNotificationBellIllustration(Modifier.size(96.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text("No notifications recorded yet", color = Color(0xFF7A7F87))
                 }
             } else {
-                LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(
+                    Modifier.fillMaxSize().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     items(filtered, key = { it.id }) { n ->
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F9)),
+                            shape = RoundedCornerShape(16.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(Modifier.padding(14.dp)) {
                                 Row {
-                                    Text(n.appLabel, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BrandViolet)
+                                    Text(n.appLabel, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = CapacityBlue)
                                     Spacer(Modifier.weight(1f))
-                                    Text(formatDate(n.time), color = Color.Gray, fontSize = 11.sp)
+                                    Text(formatDate(n.time), color = Color(0xFF888888), fontSize = 11.sp)
                                 }
                                 if (n.title.isNotBlank()) Text(n.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                if (n.text.isNotBlank()) Text(n.text, fontSize = 13.sp, color = Color.DarkGray)
+                                if (n.text.isNotBlank()) Text(n.text, fontSize = 13.sp, color = Color(0xFF444444))
                             }
                         }
                     }
@@ -273,7 +700,7 @@ fun NotificationsScreen(nav: NavController, vm: AppViewModel) {
     }
 }
 
-// ---------------- Junk cleaner ----------------
+// ---------------- Junk Cleaner ----------------
 
 private data class JunkGroup(val title: String, val files: List<File>) {
     val totalSize: Long get() = files.sumOf { it.length() }
@@ -281,7 +708,6 @@ private data class JunkGroup(val title: String, val files: List<File>) {
 
 @Composable
 fun JunkCleanerScreen(nav: NavController) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var scanning by remember { mutableStateOf(true) }
     var groups by remember { mutableStateOf<List<JunkGroup>>(emptyList()) }
@@ -297,53 +723,99 @@ fun JunkCleanerScreen(nav: NavController) {
     SimpleScaffold(
         title = "Junk Cleaner",
         onBack = { nav.popBackStack() },
+        warmBackground = true,
         bottomBar = {
             if (groups.isNotEmpty()) {
                 val toClean = groups.filter { selectedGroups.contains(it.title) }
-                Button(
-                    onClick = {
-                        scope.launch {
-                            var freed = 0L
-                            withContext(Dispatchers.IO) {
-                                toClean.forEach { g -> g.files.forEach { f -> val len = f.length(); if (f.delete()) freed += len } }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                var freed = 0L
+                                withContext(Dispatchers.IO) {
+                                    toClean.forEach { g ->
+                                        g.files.forEach { f ->
+                                            val len = f.length()
+                                            if (f.delete()) freed += len
+                                        }
+                                    }
+                                }
+                                cleanedText = "Cleaned ${formatSize(freed)}"
+                                groups = withContext(Dispatchers.IO) { scanJunk() }
                             }
-                            cleanedText = "Cleaned ${formatSize(freed)}"
-                            groups = withContext(Dispatchers.IO) { scanJunk() }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(16.dp).height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
-                    shape = RoundedCornerShape(14.dp)
-                ) { Text("Clean (${formatSize(toClean.sumOf { it.totalSize })})") }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            "Clean (${formatSize(toClean.sumOf { it.totalSize })})",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
     ) { mod ->
         Column(mod.fillMaxSize().padding(16.dp)) {
             if (scanning) {
-                LinearProgressIndicator(Modifier.fillMaxWidth(), color = BrandOrange)
-                Text("Scanning for junk…", color = Color.Gray, modifier = Modifier.padding(top = 10.dp))
+                LinearProgressIndicator(Modifier.fillMaxWidth(), color = PrimaryGreen)
+                Text("Scanning storage for junk files…", color = Color(0xFF7A7F87), modifier = Modifier.padding(top = 12.dp))
             } else if (groups.isEmpty()) {
-                Text("No junk found. Your storage is clean 🎉", modifier = Modifier.padding(8.dp))
+                Column(
+                    Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CuteTrashCanIllustration(Modifier.size(96.dp))
+                    Spacer(Modifier.height(14.dp))
+                    Text("Your storage is clean!", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
             } else {
                 if (cleanedText.isNotBlank()) {
-                    Text(cleanedText, color = BrandTeal, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                    Text(
+                        cleanedText,
+                        color = PrimaryGreen,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
                 }
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(groups, key = { it.title }) { g ->
+                        val isSelected = selectedGroups.contains(g.title)
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(g.title, fontWeight = FontWeight.SemiBold)
-                                    Text("${g.files.size} files • ${formatSize(g.totalSize)}", color = Color.Gray, fontSize = 12.sp)
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F9)),
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedGroups = if (isSelected) selectedGroups - g.title else selectedGroups + g.title
                                 }
-                                Checkbox(
-                                    checked = selectedGroups.contains(g.title),
-                                    onCheckedChange = { checked ->
-                                        selectedGroups = if (checked) selectedGroups + g.title else selectedGroups - g.title
+                        ) {
+                            Row(
+                                Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(g.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    Text(
+                                        "${g.files.size} files • ${formatSize(g.totalSize)}",
+                                        color = Color(0xFF7A7F87),
+                                        fontSize = 13.sp
+                                    )
+                                }
+                                RoundCheckButton(
+                                    checked = isSelected,
+                                    onToggle = {
+                                        selectedGroups = if (isSelected) selectedGroups - g.title else selectedGroups + g.title
                                     }
                                 )
                             }
@@ -351,61 +823,45 @@ fun JunkCleanerScreen(nav: NavController) {
                     }
                 }
             }
-            if (!hasAllFilesAccess(context)) {
-                Text(
-                    "Tip: grant All Files Access from the home screen scan flow for a complete junk scan.",
-                    color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp)
-                )
-            }
         }
     }
 }
 
 private fun scanJunk(): List<JunkGroup> {
     val root = Environment.getExternalStorageDirectory() ?: return emptyList()
-    val screenshots = ArrayList<File>()
+    val apkInstallers = ArrayList<File>()
     val tempFiles = ArrayList<File>()
     val largeFiles = ArrayList<File>()
     val imageByHash = HashMap<String, MutableList<File>>()
-    root.walkTopDown().maxDepth(12).forEach { f ->
+    root.walkTopDown().maxDepth(14).forEach { f ->
         if (!f.isFile) return@forEach
-        val path = f.path.replace('\\', '/')
+        val ext = f.extension.lowercase()
         when {
-            path.contains("/Screenshots/", true) -> screenshots += f
-            f.extension.lowercase() in setOf("tmp", "cache", "log") -> tempFiles += f
+            ext in setOf("apk", "xapk", "apks") -> apkInstallers += f
+            ext in setOf("tmp", "temp", "cache", "log", "bak") -> tempFiles += f
         }
         if (f.length() > 50L * 1024 * 1024) largeFiles += f
-        if (FileCategory.fromExtension(f.extension) == FileCategory.PHOTO && f.length() in 10_000..20_000_000) {
-            val key = f.length().toString() + ":" + md5Head(f)
+        if (FileCategory.fromExtension(ext) == FileCategory.PHOTO && f.length() in 10_000..20_000_000) {
+            val key = f.length().toString() + ":" + FileScanner.md5Head(f)
             imageByHash.getOrPut(key) { ArrayList() } += f
         }
     }
     val duplicates = imageByHash.values.filter { it.size > 1 }.flatMap { it.drop(1) }
     return listOf(
-        JunkGroup("Screenshots", screenshots),
+        JunkGroup("Temp, Cache & Log Files", tempFiles),
+        JunkGroup("Obsolete APK Installers", apkInstallers),
         JunkGroup("Duplicate Photos", duplicates),
-        JunkGroup("Large Files (>50 MB) — review before deleting", largeFiles),
-        JunkGroup("Temp & Log Files", tempFiles)
+        JunkGroup("Large Files (>50 MB)", largeFiles)
     ).filter { it.files.isNotEmpty() }
 }
 
-private fun md5Head(f: File): String = runCatching {
-    val md = MessageDigest.getInstance("MD5")
-    f.inputStream().use { input ->
-        val buf = ByteArray(64 * 1024)
-        val read = input.read(buf)
-        if (read > 0) md.update(buf, 0, read)
-    }
-    md.digest().joinToString("") { "%02x".format(it) }
-}.getOrDefault("")
-
-// ---------------- Storage & uninstaller ----------------
+// ---------------- Storage & Uninstaller ----------------
 
 @Composable
 fun StorageScreen(nav: NavController) {
     val context = LocalContext.current
     val stat = remember {
-        val path = Environment.getDataDirectory()
+        val path = Environment.getExternalStorageDirectory() ?: Environment.getDataDirectory()
         val s = StatFs(path.path)
         val total = s.blockCountLong * s.blockSizeLong
         val free = s.availableBlocksLong * s.blockSizeLong
@@ -420,41 +876,64 @@ fun StorageScreen(nav: NavController) {
                 .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
         }
     }
-    SimpleScaffold(title = "Storage & Apps", onBack = { nav.popBackStack() }) { mod ->
-        LazyColumn(mod.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    SimpleScaffold(title = "Capacity & Apps", onBack = { nav.popBackStack() }) { mod ->
+        LazyColumn(
+            mod.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             item {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F9)),
+                    shape = RoundedCornerShape(18.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Internal Storage", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Spacer(Modifier.height(8.dp))
+                    Column(Modifier.padding(18.dp)) {
+                        Text("Device Storage", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Spacer(Modifier.height(10.dp))
                         val used = stat.first - stat.second
                         LinearProgressIndicator(
                             progress = { if (stat.first > 0) used.toFloat() / stat.first else 0f },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = BrandViolet
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(10.dp)
+                                .clip(RoundedCornerShape(50)),
+                            color = CapacityBlue
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Text("${formatSize(used)} used of ${formatSize(stat.first)} • ${formatSize(stat.second)} free", color = Color.Gray, fontSize = 13.sp)
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "${formatSize(used)} used of ${formatSize(stat.first)} • ${formatSize(stat.second)} free",
+                            color = Color(0xFF666B75),
+                            fontSize = 13.sp
+                        )
                     }
                 }
-                Text("Installed Apps (${apps.size}) — tap Uninstall to remove", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+                Text(
+                    "Installed Apps (${apps.size})",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)
+                )
             }
             items(apps, key = { it.packageName }) { appInfo ->
                 val pm = context.packageManager
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F9)),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Apps, contentDescription = null, tint = BrandViolet)
-                        Column(Modifier.padding(start = 10.dp).weight(1f)) {
-                            Text(pm.getApplicationLabel(appInfo).toString(), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
-                            Text(appInfo.packageName, color = Color.Gray, fontSize = 11.sp)
+                    Row(
+                        Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Apps, contentDescription = null, tint = CapacityBlue)
+                        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                            Text(
+                                pm.getApplicationLabel(appInfo).toString(),
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                                maxLines = 1
+                            )
+                            Text(appInfo.packageName, color = Color(0xFF888888), fontSize = 11.sp)
                         }
                         Button(
                             onClick = {
@@ -464,9 +943,9 @@ fun StorageScreen(nav: NavController) {
                                 }
                                 runCatching { context.startActivity(intent) }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = BrandPink),
-                            shape = RoundedCornerShape(10.dp)
-                        ) { Text("Uninstall", fontSize = 12.sp) }
+                            colors = ButtonDefaults.buttonColors(containerColor = CoralRed),
+                            shape = RoundedCornerShape(50)
+                        ) { Text("Uninstall", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                     }
                 }
             }
