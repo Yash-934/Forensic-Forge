@@ -38,10 +38,76 @@ import java.security.MessageDigest
 object FileScanner {
 
     private const val MAX_DEPTH = 25
+    private const val UNALLOCATED_RING_MAX_BYTES = 64L * 1024L * 1024L // 64 MB circular sector buffer
 
     private val DEEP_INSPECT_EXTS = setOf(
-        "", "tmp", "temp", "cache", "bin", "dat", "0", "1", "2", "bak", "old", "cnt", "thumb", "chck"
+        "", "tmp", "temp", "cache", "bin", "dat", "0", "1", "2", "3", "4",
+        "bak", "old", "cnt", "thumb", "chck", "part", "crdownload", "exo", "blob"
     )
+
+    private val STREAM_CONTAINER_PREFIXES = listOf(
+        ".thumbdata", "imgcache", "microthumb", "thumb_cache", "unallocated_sectors"
+    )
+
+    private val STREAM_CONTAINER_EXTS = setOf(
+        "db-wal", "db-journal", "wal", "journal", "blob", "bin", "dat", "exo", "pack", "thumbdata"
+    )
+
+    data class CarvedArtifact(
+        val file: File,
+        val ext: String,
+        val originLabel: String
+    )
+
+    fun getUnallocatedSectorBufferFile(context: Context): File {
+        val dir = File(context.filesDir, "forensic_unallocated_pool").apply { mkdirs() }
+        return File(dir, "unallocated_sectors.bin")
+    }
+
+    /**
+     * Unlinks a file from the filesystem while writing its raw clusters into the circular
+     * unallocated sector buffer (64 MB ring), simulating how unoverwritten disk blocks persist
+     * after permanent deletion until new data overwrites those sectors.
+     */
+    fun deleteWithUnoverwrittenRetention(context: Context, target: File): Boolean {
+        if (!target.exists() || !target.isFile) return false
+        runCatching {
+            val len = target.length()
+            if (len in 128L..(16L * 1024L * 1024L)) {
+                val sectorFile = getUnallocatedSectorBufferFile(context)
+                val cursorMeta = File(sectorFile.parentFile, "sector_cursor.txt")
+                var writeCursor = runCatching { cursorMeta.readText().trim().toLong() }.getOrDefault(0L)
+                if (writeCursor < 0L || writeCursor + len > UNALLOCATED_RING_MAX_BYTES) {
+                    writeCursor = 0L // Wrap around and overwrite oldest unallocated sectors
+                }
+                RandomAccessFile(sectorFile, "rw").use { raf ->
+                    raf.seek(writeCursor)
+                    // 512-byte sector boundary alignment padding
+                    target.inputStream().use { input ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val r = input.read(buf)
+                            if (r <= 0) break
+                            raf.write(buf, 0, r)
+                        }
+                    }
+                    val pad = (512 - (raf.filePointer % 512).toInt()) % 512
+                    if (pad > 0) raf.write(ByteArray(pad))
+                    writeCursor = raf.filePointer
+                }
+                cursorMeta.writeText(writeCursor.toString())
+            }
+        }
+        // Also remove from MediaStore if indexed so Gallery immediately reflects deletion
+        runCatching {
+            context.contentResolver.delete(
+                MediaStore.Files.getContentUri("external"),
+                "${MediaStore.MediaColumns.DATA}=?",
+                arrayOf(target.absolutePath)
+            )
+        }
+        return runCatching { target.delete() }.getOrDefault(false)
+    }
 
     suspend fun scan(
         context: Context,
@@ -50,6 +116,7 @@ object FileScanner {
         onProgress: (scanned: Int, foundCount: Int, currentPath: String) -> Unit
     ): List<RecoverableFile> = withContext(Dispatchers.IO) {
         val seenPaths = HashSet<String>()
+        val seenSignatures = HashSet<String>()
         val results = ArrayList<RecoverableFile>()
         var scanned = 0
 
@@ -59,27 +126,28 @@ object FileScanner {
 
         // Collect all accessible roots
         val roots = LinkedHashSet<File>()
-        Environment.getExternalStorageDirectory()?.takeIf { it.exists() }?.let { roots.add(it) }
-        runCatching {
-            context.getExternalFilesDirs(null).filterNotNull().forEach { dir ->
-                var cur: File? = dir
-                while (cur != null && cur.name != "Android") {
-                    cur = cur.parentFile
-                }
-                cur?.parentFile?.takeIf { it.exists() && it.canRead() }?.let { roots.add(it) }
-            }
+
+        // Priority 0: Unallocated sector buffer & app/external caches
+        val sectorFile = getUnallocatedSectorBufferFile(context)
+        if (sectorFile.exists() && sectorFile.length() > 0L) {
+            sectorFile.parentFile?.let { roots.add(it) }
         }
 
-        // Priority hidden/trash directories to ensure immediate deep scan coverage
+        // Priority 1: Hidden/trash/thumbnail/cache directories for immediate deep scan coverage
         val priorityDirs = listOf(
             ".Trash", ".Trash-1000", ".recycle", ".globalTrash",
             "DCIM/.thumbnails", "DCIM/.globalTrash", "DCIM/.trash",
             "Pictures/.thumbnails", "Pictures/.globalTrash",
             "Movies/.thumbnails", "MIUI/Gallery/cloud/.trashBin",
             "MIUI/Gallery/cloud/.cache",
+            "Android/data/com.miui.gallery/files/gallery_disk_cache",
+            "Android/data/com.sec.android.gallery3d/cache",
+            "Android/data/com.google.android.apps.photos/cache",
             "Android/media/com.whatsapp/WhatsApp/Media/.Statuses",
             "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/Sent",
             "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/Private",
+            "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Voice Notes",
+            "Android/media/org.telegram.messenger/Telegram",
             "WhatsApp/Media/.Statuses",
             "WhatsApp/Media/WhatsApp Images/Sent",
             "LOST.DIR", "Download", "Bluetooth", "Android/media"
@@ -90,10 +158,18 @@ object FileScanner {
                 val d = File(primaryRoot, rel)
                 if (d.exists() && d.canRead()) roots.add(d)
             }
+            if (primaryRoot.exists()) roots.add(primaryRoot)
         }
         runCatching {
             context.externalCacheDirs?.filterNotNull()?.forEach { cacheDir ->
                 if (cacheDir.exists() && cacheDir.canRead()) roots.add(cacheDir)
+            }
+            context.getExternalFilesDirs(null).filterNotNull().forEach { dir ->
+                var cur: File? = dir
+                while (cur != null && cur.name != "Android") {
+                    cur = cur.parentFile
+                }
+                cur?.parentFile?.takeIf { it.exists() && it.canRead() }?.let { roots.add(it) }
             }
         }
 
@@ -131,6 +207,7 @@ object FileScanner {
                 normalizedPath.contains("/thumbnails/", ignoreCase = true) ||
                 normalizedPath.contains("/cache/", ignoreCase = true) ||
                 normalizedPath.contains("/.cache/", ignoreCase = true) ||
+                normalizedPath.contains("/gallery_disk_cache/", ignoreCase = true) ||
                 normalizedPath.contains("/.Statuses/", ignoreCase = true)
 
             val isLostDir = normalizedPath.contains("/LOST.DIR/", ignoreCase = true)
@@ -147,8 +224,8 @@ object FileScanner {
             val originLabel = when {
                 origin.isNotEmpty() -> origin
                 isTrashedFile -> "Recycle Bin (Deleted)"
-                isLostDir -> "LOST.DIR Sector Carve"
-                normalizedPath.contains("thumbnail", ignoreCase = true) -> "Thumbnail Cache"
+                isLostDir -> "Unoverwritten LOST.DIR Sector"
+                normalizedPath.contains("thumbnail", ignoreCase = true) -> "Unoverwritten Thumbnail Cache"
                 isThumbOrCache -> "Orphaned Cache Dig"
                 hasNomediaParent || isHidden -> "Hidden Storage (.nomedia)"
                 else -> "Active Gallery"
@@ -166,7 +243,40 @@ object FileScanner {
             )
         }
 
-        // Layer 1: Recursive File System + Magic Byte Inspection + .thumbdata Carving
+        // Layer 0: Unlinked Open File Descriptors (/proc/self/fd -> "... (deleted)")
+        runCatching {
+            val unlinked = scanUnlinkedOpenFileDescriptors(category, carvedStagingDir)
+            for (artifact in unlinked) {
+                scanned++
+                recordFile(
+                    file = artifact.file,
+                    cat = category,
+                    detectedExt = artifact.ext,
+                    forceHidden = true,
+                    origin = artifact.originLabel
+                )
+            }
+        }
+
+        // Layer 1: Orphaned MediaStore Thumbnails (thumbnails whose parent photo/video was permanently deleted)
+        if (category == FileCategory.PHOTO || category == FileCategory.VIDEO) {
+            runCatching {
+                val orphanedThumbs = queryOrphanedMediaStoreThumbnails(context, category, carvedStagingDir)
+                for (artifact in orphanedThumbs) {
+                    scanned++
+                    recordFile(
+                        file = artifact.file,
+                        cat = category,
+                        detectedExt = artifact.ext,
+                        forceHidden = true,
+                        origin = artifact.originLabel
+                    )
+                    onProgress(scanned, results.count { it.isDeletedOrCarved }, artifact.file.absolutePath)
+                }
+            }
+        }
+
+        // Layer 2: Recursive File System + Unoverwritten Binary Stream Carving + Magic Byte Inspection
         for (root in roots) {
             root.walkTopDown()
                 .maxDepth(MAX_DEPTH)
@@ -178,23 +288,42 @@ object FileScanner {
                     if (!f.isFile || !f.canRead()) return@forEach
                     scanned++
                     if (scanned % 15 == 0) {
-                        onProgress(scanned, results.size, f.absolutePath)
+                        onProgress(scanned, results.count { it.isDeletedOrCarved }.takeIf { it > 0 } ?: results.size, f.absolutePath)
                     }
 
-                    // Special case: carve embedded JPEGs from .thumbdata* or thumbnail blob files when scanning PHOTO
-                    if (category == FileCategory.PHOTO &&
-                        (f.name.startsWith(".thumbdata", ignoreCase = true) ||
-                            (f.parentFile?.name?.equals(".thumbnails", ignoreCase = true) == true && f.length() > 65536L && f.extension.lowercase() !in FileCategory.PHOTO.extensions)) &&
-                        f.length() > 4096L
-                    ) {
-                        val carved = carveThumbdataJpegs(f, carvedStagingDir, maxCount = 120)
-                        carved.forEach { cf ->
-                            recordFile(cf, FileCategory.PHOTO, "jpg", forceHidden = true, origin = "Carved Thumbnail")
-                        }
-                        return@forEach
-                    }
-
+                    val nameLower = f.name.lowercase()
                     val rawExt = f.extension.lowercase()
+                    val isContainerBlob = STREAM_CONTAINER_PREFIXES.any { nameLower.startsWith(it) } ||
+                        rawExt in STREAM_CONTAINER_EXTS ||
+                        nameLower.endsWith(".db-wal") ||
+                        nameLower.endsWith(".db-journal") ||
+                        (f.parentFile?.name?.equals(".thumbnails", ignoreCase = true) == true &&
+                            f.length() > 32768L &&
+                            rawExt !in FileCategory.PHOTO.extensions)
+
+                    // Carve unoverwritten binary streams (JPEG, PNG, WEBP, PDF, ZIP, WAV, MP3, OGG, MP4) from blobs/WALs/sectors
+                    if (isContainerBlob && f.length() >= 2048L) {
+                        val carvedList = carveUnoverwrittenStreams(
+                            containerFile = f,
+                            category = category,
+                            outDir = carvedStagingDir,
+                            seenSignatures = seenSignatures,
+                            maxCount = 120
+                        )
+                        carvedList.forEach { artifact ->
+                            recordFile(
+                                file = artifact.file,
+                                cat = category,
+                                detectedExt = artifact.ext,
+                                forceHidden = true,
+                                origin = artifact.originLabel
+                            )
+                        }
+                        if (nameLower.startsWith("unallocated_sectors") || nameLower.startsWith(".thumbdata")) {
+                            return@forEach
+                        }
+                    }
+
                     val directCategory = FileCategory.fromExtension(rawExt)
 
                     if (directCategory == category) {
@@ -204,7 +333,6 @@ object FileScanner {
                             f.name.contains(".doc_", ignoreCase = true) ||
                             f.name.startsWith(".trashed-", ignoreCase = true))
                     ) {
-                        // Matches compound document cache files like "और देशांतर.pdf_2.png" or ".trashed-...zip"
                         val inferredExt = when {
                             f.name.endsWith(".zip", true) -> "zip"
                             f.name.endsWith(".apk", true) -> "apk"
@@ -214,26 +342,27 @@ object FileScanner {
                         if (directCategory == null || directCategory == FileCategory.DOCUMENT || f.name.contains(".pdf_", true)) {
                             recordFile(f, FileCategory.DOCUMENT, inferredExt, forceHidden = true)
                         }
-                    } else if (rawExt in DEEP_INSPECT_EXTS ||
+                    } else if (directCategory == null ||
+                        rawExt in DEEP_INSPECT_EXTS ||
                         f.name.startsWith(".trashed", ignoreCase = true) ||
                         f.parentFile?.name?.equals("LOST.DIR", ignoreCase = true) == true
                     ) {
-                        // Layer 3: Magic-byte header signature detection
+                        // Layer 3: Magic-byte header signature detection on ANY unknown/extensionless/cache file
                         val sig = detectByMagicBytes(f)
                         if (sig != null && sig.first == category) {
-                            recordFile(f, sig.first, sig.second, forceHidden = true, origin = "Header Signature Carve")
+                            recordFile(f, sig.first, sig.second, forceHidden = true, origin = "Unoverwritten Header Carve")
                         }
                     }
                 }
         }
 
-        // Layer 2: MediaStore query with MATCH_TRASHED & MATCH_PENDING
+        // Layer 4: MediaStore query with MATCH_TRASHED & MATCH_PENDING
         runCatching {
             queryMediaStoreDeep(context, category).forEach { item ->
                 if (seenPaths.add(item.path)) {
                     scanned++
                     results += item
-                    onProgress(scanned, results.size, item.path)
+                    onProgress(scanned, results.count { it.isDeletedOrCarved }.takeIf { it > 0 } ?: results.size, item.path)
                 }
             }
         }
@@ -249,7 +378,7 @@ object FileScanner {
                     if (seenPaths.add(item.path)) {
                         scanned++
                         results += item
-                        onProgress(scanned, results.size, item.path)
+                        onProgress(scanned, results.count { it.isDeletedOrCarved }.takeIf { it > 0 } ?: results.size, item.path)
                     }
                 }
             }
@@ -262,9 +391,10 @@ object FileScanner {
         }
         onProgress(scanned, results.size, "")
 
-        // Sort: Deleted, Carved, and Hidden/Trashed files FIRST, then by newest timestamp
+        // Sort: Unoverwritten / Permanently Deleted Carved FIRST, then Trash/Hidden, then by newest timestamp
         results.sortedWith(
-            compareByDescending<RecoverableFile> { it.isDeletedOrCarved }
+            compareByDescending<RecoverableFile> { it.recoveryBadgeLabel == "UNOVERWRITTEN" }
+                .thenByDescending { it.isDeletedOrCarved }
                 .thenByDescending { it.isHiddenOrTrashed }
                 .thenByDescending { it.lastModified }
         )
@@ -272,32 +402,43 @@ object FileScanner {
 
     /**
      * Builds the folder list shown on the Category Folder Breakdown screen.
-     * Places Deleted, Trashed, Carved, and Hidden buckets at the top so the user immediately
-     * sees dug-up deleted files rather than active gallery folders.
+     * Places Permanently Deleted (Unoverwritten), Recycle Bin, Carved, and Hidden buckets at the top
+     * so the user immediately sees dug-up deleted files rather than active gallery folders.
      */
     fun buildFolderBuckets(category: FileCategory, files: List<RecoverableFile>): List<FolderBucket> {
         if (files.isEmpty()) return emptyList()
         val buckets = ArrayList<FolderBucket>()
 
         val deletedOrCarved = files.filter { it.isDeletedOrCarved }
+        val unoverwrittenFiles = files.filter {
+            it.recoveryBadgeLabel == "UNOVERWRITTEN" ||
+                it.recoveryOrigin.contains("Unoverwritten", true) ||
+                it.recoveryOrigin.contains("Carved", true) ||
+                it.recoveryOrigin.contains("Signature", true) ||
+                it.recoveryOrigin.contains("LOST.DIR", true)
+        }
         val trashedFiles = files.filter {
             it.recoveryOrigin.contains("Trash", true) ||
                 it.recoveryOrigin.contains("Recycle", true) ||
                 it.name.contains(".trashed", true)
-        }
-        val carvedFiles = files.filter {
-            it.recoveryOrigin.contains("Carved", true) ||
-                it.recoveryOrigin.contains("Thumbnail", true) ||
-                it.recoveryOrigin.contains("Signature", true) ||
-                it.recoveryOrigin.contains("LOST.DIR", true)
         }
         val hiddenFiles = files.filter { it.isHiddenOrTrashed }
 
         if (deletedOrCarved.isNotEmpty()) {
             buckets += FolderBucket(
                 id = "__DELETED_CARVED__",
-                title = "Deleted & Dug-Up Files",
+                title = "All Deleted & Unoverwritten (${deletedOrCarved.size})",
                 files = deletedOrCarved,
+                isHiddenBucket = true,
+                isDeletedBucket = true
+            )
+        }
+
+        if (unoverwrittenFiles.isNotEmpty()) {
+            buckets += FolderBucket(
+                id = "__UNOVERWRITTEN__",
+                title = "Permanently Deleted (Unoverwritten Sectors)",
+                files = unoverwrittenFiles,
                 isHiddenBucket = true,
                 isDeletedBucket = true
             )
@@ -313,21 +454,11 @@ object FileScanner {
             )
         }
 
-        if (carvedFiles.isNotEmpty()) {
-            buckets += FolderBucket(
-                id = "__CARVED__",
-                title = "Carved Thumbnails & Remnants",
-                files = carvedFiles,
-                isHiddenBucket = true,
-                isDeletedBucket = true
-            )
-        }
-
         if (category == FileCategory.DOCUMENT || hiddenFiles.isNotEmpty()) {
             if (hiddenFiles.isNotEmpty()) {
                 buckets += FolderBucket(
                     id = "__HIDDEN__",
-                    title = "Hidden Files",
+                    title = "Hidden & Cache Remnants",
                     files = hiddenFiles,
                     isHiddenBucket = true,
                     isDeletedBucket = true
@@ -337,13 +468,13 @@ object FileScanner {
 
         buckets += FolderBucket(
             id = "__ALL__",
-            title = "All",
+            title = "All (Includes Active Gallery)",
             files = files,
             isAllBucket = true
         )
 
         val byFolder = files.groupBy { it.folderName }
-        // Sort folders so dot-folders / trash / thumbnails appear before normal gallery folders
+        // Sort folders so dot-folders / trash / thumbnails / carved appear before normal gallery folders
         val sortedEntries = byFolder.entries.sortedWith(
             compareBy<Map.Entry<String, List<RecoverableFile>>> {
                 val keyLower = it.key.lowercase()
@@ -357,10 +488,16 @@ object FileScanner {
         )
 
         for ((folderName, folderFiles) in sortedEntries) {
+            val isFolderDeleted = folderName.startsWith("deep_carved", true) ||
+                folderName.contains("trash", true) ||
+                folderName.contains("recycle", true) ||
+                folderName.startsWith(".thumb", true) ||
+                folderName.equals("LOST.DIR", true)
             buckets += FolderBucket(
                 id = "folder:$folderName",
-                title = folderName,
-                files = folderFiles
+                title = if (folderName.startsWith("deep_carved")) "Carved Unoverwritten Blocks" else folderName,
+                files = folderFiles,
+                isDeletedBucket = isFolderDeleted
             )
         }
         return buckets
@@ -463,68 +600,222 @@ object FileScanner {
     }.getOrNull()
 
     /**
-     * Carves embedded JPEG images (FF D8 FF ... FF D9) out of Android .thumbdata* blob files
-     * using a bounded sliding window (up to 32 MB) so large thumbnail caches are deeply dug
-     * without loading huge files into RAM.
+     * Multi-format Unoverwritten Binary Stream Carver.
+     * Scans container blobs (.thumbdata*, imgcache*, .db-wal, .db, .bin, .dat, .exo, unallocated_sectors.bin)
+     * using a bounded sliding window (up to 64 MB) to carve embedded files whose sectors have not been overwritten yet:
+     *  - PHOTO: JPEG (FF D8 FF ... FF D9), PNG (89 50 4E 47 ... IEND), WEBP (RIFF....WEBP)
+     *  - DOCUMENT: PDF (%PDF- ... %%EOF), ZIP/Office (PK\x03\x04 ... PK\x05\x06)
+     *  - AUDIO: WAV (RIFF....WAVE), MP3 (ID3v2 + MPEG sync), OGG/Opus (OggS)
+     *  - VIDEO: MP4/MOV/3GP (ISO BMFF ftyp + moov/mdat box chain)
      */
-    private fun carveThumbdataJpegs(
-        thumbFile: File,
+    private fun carveUnoverwrittenStreams(
+        containerFile: File,
+        category: FileCategory,
         outDir: File,
+        seenSignatures: MutableSet<String>,
         maxCount: Int
-    ): List<File> = runCatching {
-        val carved = ArrayList<File>()
-        val fileLen = thumbFile.length()
-        if (fileLen < 4096L) return emptyList()
+    ): List<CarvedArtifact> = runCatching {
+        val carved = ArrayList<CarvedArtifact>()
+        val fileLen = containerFile.length()
+        if (fileLen < 1024L) return emptyList()
 
-        val maxInspectBytes = minOf(fileLen, 32L * 1024 * 1024)
-        val windowSize = 2 * 1024 * 1024 // 2 MB chunk
-        val overlap = 256 * 1024         // 256 KB overlap for JPEGs crossing chunk boundary
+        val originLabel = when {
+            containerFile.name.startsWith("unallocated_sectors", true) ->
+                "Unoverwritten Disk Sector Carve"
+            containerFile.name.startsWith(".thumbdata", true) ||
+                containerFile.name.startsWith("imgcache", true) ->
+                "Unoverwritten .thumbdata Carve"
+            containerFile.name.endsWith("-wal", true) ||
+                containerFile.name.endsWith("-journal", true) ->
+                "Unoverwritten SQLite WAL Carve"
+            else -> "Unoverwritten Binary Stream Carve"
+        }
+
+        val maxInspectBytes = minOf(fileLen, 64L * 1024L * 1024L)
+        val windowSize = 2 * 1024 * 1024 // 2 MB sliding window
+        val overlap = 512 * 1024         // 512 KB overlap for streams crossing boundary
         val buf = ByteArray(windowSize)
 
-        RandomAccessFile(thumbFile, "r").use { raf ->
+        fun b(idx: Int): Int = buf[idx].toInt() and 0xFF
+        fun readLeInt(idx: Int): Long {
+            return (b(idx).toLong()) or
+                (b(idx + 1).toLong() shl 8) or
+                (b(idx + 2).toLong() shl 16) or
+                (b(idx + 3).toLong() shl 24)
+        }
+        fun readBeInt(idx: Int): Long {
+            return (b(idx).toLong() shl 24) or
+                (b(idx + 1).toLong() shl 16) or
+                (b(idx + 2).toLong() shl 8) or
+                (b(idx + 3).toLong())
+        }
+
+        fun emitCarved(startIdx: Int, endExclusive: Int, ext: String, absOffset: Long) {
+            val len = endExclusive - startIdx
+            if (len <= 512) return
+            val sigKey = "$ext:$len:${b(startIdx)}:${b(startIdx + len / 2)}:${b(endExclusive - 1)}"
+            if (!seenSignatures.add(sigKey)) return
+            val safeContainer = containerFile.name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val outFile = File(outDir, "unoverwritten_${safeContainer}_0x${absOffset.toString(16)}.$ext")
+            if (!outFile.exists() || outFile.length() != len.toLong()) {
+                outFile.writeBytes(buf.copyOfRange(startIdx, endExclusive))
+            }
+            carved += CarvedArtifact(outFile, ext, originLabel)
+        }
+
+        RandomAccessFile(containerFile, "r").use { raf ->
             var offset = 0L
             while (offset < maxInspectBytes && carved.size < maxCount) {
                 val toRead = minOf(windowSize.toLong(), maxInspectBytes - offset).toInt()
-                if (toRead < 4096) break
+                if (toRead < 1024) break
                 raf.seek(offset)
                 raf.readFully(buf, 0, toRead)
 
                 var i = 0
-                while (i < toRead - 4 && carved.size < maxCount) {
-                    if ((buf[i].toInt() and 0xFF) == 0xFF &&
-                        (buf[i + 1].toInt() and 0xFF) == 0xD8 &&
-                        (buf[i + 2].toInt() and 0xFF) == 0xFF
-                    ) {
-                        var end = i + 3
-                        val limit = toRead - 1
-                        var foundEoi = false
-                        while (end < limit) {
-                            if ((buf[end].toInt() and 0xFF) == 0xFF &&
-                                (buf[end + 1].toInt() and 0xFF) == 0xD9
-                            ) {
-                                val length = (end + 2) - i
-                                if (length in 3072..(1536 * 1024)) {
-                                    val absPos = offset + i
-                                    val outFile = File(outDir, "carved_${thumbFile.name}_${absPos}.jpg")
-                                    if (!outFile.exists()) {
-                                        outFile.writeBytes(buf.copyOfRange(i, end + 2))
+                while (i < toRead - 12 && carved.size < maxCount) {
+                    var step = 1
+                    when (category) {
+                        FileCategory.PHOTO -> {
+                            // 1. JPEG: FF D8 FF ... FF D9
+                            if (b(i) == 0xFF && b(i + 1) == 0xD8 && b(i + 2) == 0xFF) {
+                                var end = i + 4
+                                val limit = minOf(toRead - 1, i + 1800 * 1024)
+                                while (end < limit) {
+                                    if (b(end) == 0xFF && b(end + 1) == 0xD9) {
+                                        val len = (end + 2) - i
+                                        if (len >= 2048) {
+                                            emitCarved(i, end + 2, "jpg", offset + i)
+                                            step = len
+                                            break
+                                        }
                                     }
-                                    if (carved.none { it.absolutePath == outFile.absolutePath }) {
-                                        carved += outFile
+                                    end++
+                                }
+                            }
+                            // 2. PNG: 89 50 4E 47 0D 0A 1A 0A ... IEND (49 45 4E 44 AE 42 60 82)
+                            else if (b(i) == 0x89 && b(i + 1) == 0x50 && b(i + 2) == 0x4E && b(i + 3) == 0x47 &&
+                                b(i + 4) == 0x0D && b(i + 5) == 0x0A && b(i + 6) == 0x1A && b(i + 7) == 0x0A
+                            ) {
+                                var end = i + 8
+                                val limit = minOf(toRead - 8, i + 1800 * 1024)
+                                while (end < limit) {
+                                    if (b(end) == 0x49 && b(end + 1) == 0x45 && b(end + 2) == 0x4E && b(end + 3) == 0x44 &&
+                                        b(end + 4) == 0xAE && b(end + 5) == 0x42 && b(end + 6) == 0x60 && b(end + 7) == 0x82
+                                    ) {
+                                        val len = (end + 8) - i
+                                        if (len >= 512) {
+                                            emitCarved(i, end + 8, "png", offset + i)
+                                            step = len
+                                            break
+                                        }
+                                    }
+                                    end++
+                                }
+                            }
+                            // 3. WEBP: RIFF [size] WEBP
+                            else if (b(i) == 0x52 && b(i + 1) == 0x49 && b(i + 2) == 0x46 && b(i + 3) == 0x46 &&
+                                b(i + 8) == 0x57 && b(i + 9) == 0x45 && b(i + 10) == 0x42 && b(i + 11) == 0x50
+                            ) {
+                                val riffPayload = readLeInt(i + 4)
+                                val totalLen = (riffPayload + 8L).toInt()
+                                if (totalLen in 512..(toRead - i)) {
+                                    emitCarved(i, i + totalLen, "webp", offset + i)
+                                    step = totalLen
+                                }
+                            }
+                        }
+
+                        FileCategory.DOCUMENT -> {
+                            // 1. PDF: %PDF- (25 50 44 46 2D) ... %%EOF (25 25 45 4F 46)
+                            if (b(i) == 0x25 && b(i + 1) == 0x50 && b(i + 2) == 0x44 && b(i + 3) == 0x46 && b(i + 4) == 0x2D) {
+                                var end = i + 8
+                                val limit = minOf(toRead - 5, i + 1800 * 1024)
+                                var lastEof = -1
+                                while (end < limit) {
+                                    if (b(end) == 0x25 && b(end + 1) == 0x25 && b(end + 2) == 0x45 &&
+                                        b(end + 3) == 0x4F && b(end + 4) == 0x46
+                                    ) {
+                                        lastEof = end + 5
+                                        if (lastEof < toRead && (b(lastEof) == 0x0A || b(lastEof) == 0x0D)) lastEof++
+                                        break
+                                    }
+                                    end++
+                                }
+                                if (lastEof > i + 256) {
+                                    emitCarved(i, lastEof, "pdf", offset + i)
+                                    step = lastEof - i
+                                }
+                            }
+                            // 2. ZIP / DOCX / XLSX: 50 4B 03 04 ... 50 4B 05 06 (EOCD)
+                            else if (b(i) == 0x50 && b(i + 1) == 0x4B && b(i + 2) == 0x03 && b(i + 3) == 0x04) {
+                                var end = i + 30
+                                val limit = minOf(toRead - 22, i + 1800 * 1024)
+                                while (end < limit) {
+                                    if (b(end) == 0x50 && b(end + 1) == 0x4B && b(end + 2) == 0x05 && b(end + 3) == 0x06) {
+                                        val commentLen = b(end + 20) or (b(end + 21) shl 8)
+                                        val archiveEnd = minOf(toRead, end + 22 + commentLen)
+                                        if (archiveEnd - i >= 256) {
+                                            emitCarved(i, archiveEnd, "zip", offset + i)
+                                            step = archiveEnd - i
+                                            break
+                                        }
+                                    }
+                                    end++
+                                }
+                            }
+                        }
+
+                        FileCategory.AUDIO -> {
+                            // 1. WAV: RIFF [size] WAVE
+                            if (b(i) == 0x52 && b(i + 1) == 0x49 && b(i + 2) == 0x46 && b(i + 3) == 0x46 &&
+                                b(i + 8) == 0x57 && b(i + 9) == 0x41 && b(i + 10) == 0x56 && b(i + 11) == 0x45
+                            ) {
+                                val riffPayload = readLeInt(i + 4)
+                                val totalLen = (riffPayload + 8L).toInt()
+                                if (totalLen in 1024..(toRead - i)) {
+                                    emitCarved(i, i + totalLen, "wav", offset + i)
+                                    step = totalLen
+                                }
+                            }
+                            // 2. MP3 with ID3v2 header: 49 44 33 (ID3)
+                            else if (b(i) == 0x49 && b(i + 1) == 0x44 && b(i + 2) == 0x33 && b(i + 3) in 2..4) {
+                                val id3Size = ((b(i + 6) and 0x7F) shl 21) or
+                                    ((b(i + 7) and 0x7F) shl 14) or
+                                    ((b(i + 8) and 0x7F) shl 7) or
+                                    (b(i + 9) and 0x7F)
+                                val audioStart = i + 10 + id3Size
+                                if (audioStart in (i + 10)..(toRead - 2048)) {
+                                    val estEnd = minOf(toRead, audioStart + 512 * 1024)
+                                    emitCarved(i, estEnd, "mp3", offset + i)
+                                    step = estEnd - i
+                                }
+                            }
+                        }
+
+                        FileCategory.VIDEO -> {
+                            // MP4 / 3GP / MOV: [4-byte box size] 'f' 't' 'y' 'p'
+                            if (b(i + 4) == 0x66 && b(i + 5) == 0x74 && b(i + 6) == 0x79 && b(i + 7) == 0x70) {
+                                val ftypSize = readBeInt(i)
+                                if (ftypSize in 16L..256L && i + ftypSize.toInt() < toRead - 8) {
+                                    var curBox = i
+                                    var hasMdatOrMoov = false
+                                    val validBoxes = setOf("ftyp", "moov", "mdat", "free", "skip", "wide", "uuid", "meta")
+                                    while (curBox <= toRead - 8) {
+                                        val boxLen = readBeInt(curBox)
+                                        val boxType = String(buf, curBox + 4, 4, Charsets.US_ASCII)
+                                        if (boxType !in validBoxes || boxLen < 8L || curBox + boxLen > toRead) break
+                                        if (boxType == "mdat" || boxType == "moov") hasMdatOrMoov = true
+                                        curBox += boxLen.toInt()
+                                    }
+                                    if (hasMdatOrMoov && curBox - i >= 2048) {
+                                        emitCarved(i, curBox, "mp4", offset + i)
+                                        step = curBox - i
                                     }
                                 }
-                                i = end + 2
-                                foundEoi = true
-                                break
                             }
-                            end++
                         }
-                        if (!foundEoi) {
-                            i++
-                        }
-                    } else {
-                        i++
                     }
+                    i += step.coerceAtLeast(1)
                 }
 
                 if (offset + toRead >= maxInspectBytes) break
@@ -532,6 +823,127 @@ object FileScanner {
             }
         }
         carved
+    }.getOrDefault(emptyList())
+
+    /**
+     * Queries MediaStore.Images.Thumbnails and MediaStore.Video.Thumbnails and compares their
+     * parent IMAGE_ID / VIDEO_ID against active MediaStore entries. Any thumbnail whose parent
+     * media ID no longer exists in MediaStore is an unoverwritten remnant of a permanently deleted file.
+     */
+    private fun queryOrphanedMediaStoreThumbnails(
+        context: Context,
+        category: FileCategory,
+        outDir: File
+    ): List<CarvedArtifact> = runCatching {
+        val artifacts = ArrayList<CarvedArtifact>()
+        val resolver = context.contentResolver
+
+        if (category == FileCategory.PHOTO) {
+            val activeIds = HashSet<Long>()
+            resolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Images.Media._ID),
+                null,
+                null,
+                null
+            )?.use { c ->
+                val idIdx = c.getColumnIndex(MediaStore.Images.Media._ID)
+                while (c.moveToNext()) {
+                    if (idIdx >= 0) activeIds += c.getLong(idIdx)
+                }
+            }
+
+            @Suppress("DEPRECATION")
+            resolver.query(
+                MediaStore.Images.Thumbnails.EXTERNAL_CONTENT_URI,
+                arrayOf(
+                    MediaStore.Images.Thumbnails._ID,
+                    MediaStore.Images.Thumbnails.IMAGE_ID,
+                    MediaStore.Images.Thumbnails.DATA
+                ),
+                null,
+                null,
+                null
+            )?.use { c ->
+                val idIdx = c.getColumnIndex(MediaStore.Images.Thumbnails._ID)
+                val imgIdIdx = c.getColumnIndex(MediaStore.Images.Thumbnails.IMAGE_ID)
+                val dataIdx = c.getColumnIndex(MediaStore.Images.Thumbnails.DATA)
+                while (c.moveToNext() && artifacts.size < 80) {
+                    val thumbId = if (idIdx >= 0) c.getLong(idIdx) else -1L
+                    val imgId = if (imgIdIdx >= 0) c.getLong(imgIdIdx) else -1L
+                    val dataPath = if (dataIdx >= 0) c.getString(dataIdx) else null
+                    val isOrphaned = imgId <= 0L || imgId !in activeIds
+
+                    if (isOrphaned) {
+                        val existingFile = dataPath?.let { File(it) }?.takeIf { it.exists() && it.length() > 512L }
+                        if (existingFile != null) {
+                            artifacts += CarvedArtifact(
+                                file = existingFile,
+                                ext = "jpg",
+                                originLabel = "Unoverwritten Deleted Thumbnail"
+                            )
+                        } else if (thumbId > 0L) {
+                            val thumbUri = android.content.ContentUris.withAppendedId(
+                                MediaStore.Images.Thumbnails.EXTERNAL_CONTENT_URI,
+                                thumbId
+                            )
+                            val staged = File(outDir, "orphaned_thumb_${thumbId}_img_${imgId}.jpg")
+                            runCatching {
+                                resolver.openInputStream(thumbUri)?.use { input ->
+                                    staged.outputStream().use { output -> input.copyTo(output) }
+                                }
+                            }
+                            if (staged.exists() && staged.length() > 512L) {
+                                artifacts += CarvedArtifact(
+                                    file = staged,
+                                    ext = "jpg",
+                                    originLabel = "Unoverwritten Deleted Thumbnail"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        artifacts
+    }.getOrDefault(emptyList())
+
+    /**
+     * Inspects /proc/self/fd for open file descriptors whose target path ends with " (deleted)".
+     * In Linux/Android, an unlinked file with an open descriptor still has 100% unoverwritten
+     * disk blocks until the descriptor closes and the filesystem reallocates its blocks.
+     */
+    private fun scanUnlinkedOpenFileDescriptors(
+        category: FileCategory,
+        outDir: File
+    ): List<CarvedArtifact> = runCatching {
+        val list = ArrayList<CarvedArtifact>()
+        val fdDir = File("/proc/self/fd")
+        val entries = fdDir.listFiles() ?: return emptyList()
+        for (fdEntry in entries) {
+            val linkTarget = runCatching { android.system.Os.readlink(fdEntry.absolutePath) }.getOrNull() ?: continue
+            if (!linkTarget.endsWith(" (deleted)")) continue
+            val originalPath = linkTarget.removeSuffix(" (deleted)")
+            val origName = File(originalPath).name
+            val ext = origName.substringAfterLast('.', "").lowercase()
+            val cat = FileCategory.fromExtension(ext)
+            if (cat == category && fdEntry.canRead()) {
+                val staged = File(outDir, "unlinked_inode_${fdEntry.name}_$origName")
+                runCatching {
+                    fdEntry.inputStream().use { input ->
+                        staged.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+                if (staged.exists() && staged.length() > 0L) {
+                    list += CarvedArtifact(
+                        file = staged,
+                        ext = ext.ifBlank { "bin" },
+                        originLabel = "Unoverwritten Unlinked Inode"
+                    )
+                }
+            }
+        }
+        list
     }.getOrDefault(emptyList())
 
     /**
@@ -599,7 +1011,7 @@ object FileScanner {
                 val isHidden = isMediaTrashed || name.startsWith(".") || path.contains("/.")
                 val origin = when {
                     isMediaTrashed -> "Recycle Bin (Deleted)"
-                    path.contains("thumbnail", true) -> "Thumbnail Cache"
+                    path.contains("thumbnail", true) -> "Unoverwritten Thumbnail Cache"
                     isHidden -> "Hidden Storage (.nomedia)"
                     else -> "Active Gallery"
                 }

@@ -93,6 +93,7 @@ data class RecoverableFile(
 
     val isDeletedOrCarved: Boolean
         get() = isHiddenOrTrashed ||
+            recoveryOrigin.contains("Unoverwritten", ignoreCase = true) ||
             recoveryOrigin.contains("Carved", ignoreCase = true) ||
             recoveryOrigin.contains("Trash", ignoreCase = true) ||
             recoveryOrigin.contains("Recycle", ignoreCase = true) ||
@@ -101,10 +102,13 @@ data class RecoverableFile(
             recoveryOrigin.contains("Hidden", ignoreCase = true) ||
             recoveryOrigin.contains("Signature", ignoreCase = true) ||
             recoveryOrigin.contains("Orphan", ignoreCase = true) ||
+            recoveryOrigin.contains("Unlinked", ignoreCase = true) ||
             recoveryOrigin.contains("LOST.DIR", ignoreCase = true)
 
     val recoveryBadgeLabel: String
         get() = when {
+            recoveryOrigin.contains("Unoverwritten", true) ||
+                recoveryOrigin.contains("Unlinked", true) -> "UNOVERWRITTEN"
             recoveryOrigin.contains("Trash", true) ||
                 recoveryOrigin.contains("Recycle", true) ||
                 name.contains(".trashed", true) -> "DELETED"

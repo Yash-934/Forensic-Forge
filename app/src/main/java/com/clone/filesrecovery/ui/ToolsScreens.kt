@@ -112,7 +112,7 @@ fun SimilarImagesScreen(nav: NavController, vm: AppViewModel) {
                                 var deleted = 0
                                 withContext(Dispatchers.IO) {
                                     selectedPaths.forEach { p ->
-                                        if (File(p).delete()) deleted++
+                                        if (FileScanner.deleteWithUnoverwrittenRetention(context, File(p))) deleted++
                                     }
                                 }
                                 Toast.makeText(context, "Cleaned $deleted duplicate photos", Toast.LENGTH_SHORT).show()
@@ -280,7 +280,7 @@ fun ScreenshotCleanerScreen(nav: NavController, vm: AppViewModel) {
                                 var deleted = 0
                                 withContext(Dispatchers.IO) {
                                     selectedPaths.forEach { p ->
-                                        if (File(p).delete()) deleted++
+                                        if (FileScanner.deleteWithUnoverwrittenRetention(context, File(p))) deleted++
                                     }
                                 }
                                 Toast.makeText(context, "Cleaned $deleted screenshots", Toast.LENGTH_SHORT).show()
@@ -707,6 +707,7 @@ private data class JunkGroup(val title: String, val files: List<File>) {
 
 @Composable
 fun JunkCleanerScreen(nav: NavController) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var scanning by remember { mutableStateOf(true) }
     var groups by remember { mutableStateOf<List<JunkGroup>>(emptyList()) }
@@ -740,7 +741,7 @@ fun JunkCleanerScreen(nav: NavController) {
                                     toClean.forEach { g ->
                                         g.files.forEach { f ->
                                             val len = f.length()
-                                            if (f.delete()) freed += len
+                                            if (FileScanner.deleteWithUnoverwrittenRetention(context, f)) freed += len
                                         }
                                     }
                                 }

@@ -551,12 +551,13 @@ fun FolderBreakdownScreen(nav: NavController, vm: AppViewModel) {
     }
 
     var showDeletedBucketsOnly by remember(deletedTotal) {
-        mutableStateOf(false)
+        mutableStateOf(deletedTotal > 0)
     }
 
     val displayedBuckets = remember(buckets, showDeletedBucketsOnly) {
         if (showDeletedBucketsOnly) {
-            buckets.filter { it.isDeletedBucket || it.files.any { f -> f.isDeletedOrCarved } }
+            buckets.filter { it.isDeletedBucket }
+                .ifEmpty { buckets.filter { it.files.any { f -> f.isDeletedOrCarved } } }
         } else {
             buckets
         }
@@ -661,15 +662,15 @@ fun FolderBreakdownScreen(nav: NavController, vm: AppViewModel) {
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 FilterChipPill(
-                                    label = "All Vaults (${buckets.size})",
-                                    selected = !showDeletedBucketsOnly,
-                                    onClick = { showDeletedBucketsOnly = false }
-                                )
-                                FilterChipPill(
-                                    label = "Deleted & Dug-Up Only",
+                                    label = "Deleted & Unoverwritten Only",
                                     selected = showDeletedBucketsOnly,
                                     accentColor = Color(0xFFDC2626),
                                     onClick = { showDeletedBucketsOnly = true }
+                                )
+                                FilterChipPill(
+                                    label = "Include Gallery Folders",
+                                    selected = !showDeletedBucketsOnly,
+                                    onClick = { showDeletedBucketsOnly = false }
                                 )
                             }
                         }
@@ -885,9 +886,11 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
 
     var sizeFilter by remember { mutableStateOf(SizeFilter.ALL) }
     val hasDeletedInRaw = remember(rawFiles) { rawFiles.any { it.isDeletedOrCarved } }
-    // If user opened "All (Includes Gallery)" and there are deleted files, let them filter easily
-    var originFilter by remember(bucket?.id) {
-        mutableStateOf(OriginFilter.ALL_IN_BUCKET)
+    // Default to Deleted & Unoverwritten Only whenever the folder has deleted/carved items so active gallery photos never clutter the view
+    var originFilter by remember(bucket?.id, hasDeletedInRaw) {
+        mutableStateOf(
+            if (hasDeletedInRaw) OriginFilter.DELETED_AND_CARVED else OriginFilter.ALL_IN_BUCKET
+        )
     }
     var showFilterMenu by remember { mutableStateOf(false) }
 
@@ -1071,7 +1074,7 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
                 }
             }
 
-            // Forensic Source Quick-Filter Bar (so user can isolate Deleted/Carved vs Active Gallery anytime)
+            // Forensic Source Quick-Filter Bar (defaults to Deleted & Unoverwritten Only)
             if (hasDeletedInRaw && bucket?.isDeletedBucket != true) {
                 Row(
                     modifier = Modifier
@@ -1080,15 +1083,15 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FilterChipPill(
-                        label = "All (${rawFiles.size})",
-                        selected = originFilter == OriginFilter.ALL_IN_BUCKET,
-                        onClick = { originFilter = OriginFilter.ALL_IN_BUCKET }
-                    )
-                    FilterChipPill(
-                        label = "Deleted & Dug-Up (${rawFiles.count { it.isDeletedOrCarved }})",
+                        label = "Deleted & Unoverwritten (${rawFiles.count { it.isDeletedOrCarved }})",
                         selected = originFilter == OriginFilter.DELETED_AND_CARVED,
                         accentColor = Color(0xFFDC2626),
                         onClick = { originFilter = OriginFilter.DELETED_AND_CARVED }
+                    )
+                    FilterChipPill(
+                        label = "Include Active Gallery (${rawFiles.size})",
+                        selected = originFilter == OriginFilter.ALL_IN_BUCKET,
+                        onClick = { originFilter = OriginFilter.ALL_IN_BUCKET }
                     )
                 }
             }
@@ -1230,6 +1233,7 @@ private fun DocumentOrAudioListItem(
     onOpen: () -> Unit
 ) {
     val badgeColor = when (file.recoveryBadgeLabel) {
+        "UNOVERWRITTEN" -> Color(0xFFBE123C)
         "DELETED" -> Color(0xFFDC2626)
         "CARVED", "THUMB CACHE", "RAW CARVE" -> Color(0xFF7C3AED)
         "CACHE DIG", "HIDDEN" -> Color(0xFFD97706)
@@ -1302,6 +1306,7 @@ private fun FileGridItem(
     modifier: Modifier = Modifier
 ) {
     val badgeBg = when (file.recoveryBadgeLabel) {
+        "UNOVERWRITTEN" -> Color(0xFFBE123C).copy(alpha = 0.92f)
         "DELETED" -> Color(0xFFDC2626).copy(alpha = 0.88f)
         "CARVED", "THUMB CACHE", "RAW CARVE" -> Color(0xFF7C3AED).copy(alpha = 0.88f)
         "CACHE DIG", "HIDDEN" -> Color(0xFFD97706).copy(alpha = 0.88f)
