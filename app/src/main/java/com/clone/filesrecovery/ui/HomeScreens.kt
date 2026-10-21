@@ -418,16 +418,19 @@ private fun RecoveryTabContent(
                             modifier = Modifier.size(24.dp)
                         )
                     }
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             Text(
                                 text = "DeepVault",
-                                fontSize = 21.sp,
+                                fontSize = 18.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = TextPrimary
+                                color = TextPrimary,
+                                maxLines = 1
                             )
-                            Spacer(Modifier.width(8.dp))
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
@@ -435,17 +438,21 @@ private fun RecoveryTabContent(
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = "PRO ENGINE",
+                                    text = "PRO",
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = PrimaryGreen
+                                    color = PrimaryGreen,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
                         Text(
-                            text = "Forensic File Carving & Recovery",
-                            fontSize = 12.sp,
-                            color = TextSecondary
+                            text = "Forensic Carving & Recovery",
+                            fontSize = 11.sp,
+                            color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -597,6 +604,7 @@ private fun RecoveryTabContent(
                     Card(
                         modifier = Modifier
                             .weight(1f)
+                            .height(64.dp)
                             .clickable { onSwitchTab(MainTab.FORENSICS) },
                         colors = CardDefaults.cardColors(containerColor = Color.White),
                         shape = RoundedCornerShape(16.dp),
@@ -604,9 +612,9 @@ private fun RecoveryTabContent(
                     ) {
                         Row(
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .fillMaxSize()
                                 .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
-                                .padding(12.dp),
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
@@ -620,8 +628,8 @@ private fun RecoveryTabContent(
                             }
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Forensics Suite", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                                Text("Labs & Reports →", fontSize = 10.sp, color = PrimaryGreen, fontWeight = FontWeight.SemiBold)
+                                Text("Forensics", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1)
+                                Text("Labs & Reports →", fontSize = 10.sp, color = PrimaryGreen, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
                         }
                     }
@@ -629,6 +637,7 @@ private fun RecoveryTabContent(
                     Card(
                         modifier = Modifier
                             .weight(1f)
+                            .height(64.dp)
                             .clickable { onSwitchTab(MainTab.CLEANERS) },
                         colors = CardDefaults.cardColors(containerColor = Color.White),
                         shape = RoundedCornerShape(16.dp),
@@ -636,9 +645,9 @@ private fun RecoveryTabContent(
                     ) {
                         Row(
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .fillMaxSize()
                                 .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
-                                .padding(12.dp),
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
@@ -652,8 +661,8 @@ private fun RecoveryTabContent(
                             }
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Storage Cleaners", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                                Text("Radar & Sweep →", fontSize = 10.sp, color = AccentEmerald, fontWeight = FontWeight.SemiBold)
+                                Text("Cleaners", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1)
+                                Text("Radar & Sweep →", fontSize = 10.sp, color = AccentEmerald, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
                         }
                     }
@@ -774,7 +783,10 @@ private fun ForensicsTabContent(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
                                 Box(
                                     modifier = Modifier
                                         .size(44.dp)
@@ -790,18 +802,25 @@ private fun ForensicsTabContent(
                                     )
                                 }
                                 Spacer(Modifier.width(12.dp))
-                                Column {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
                                         Text(
-                                            text = "Storage Forensics Intelligence",
+                                            text = "Storage Forensics",
                                             fontWeight = FontWeight.ExtraBold,
                                             fontSize = 15.sp,
-                                            color = TextPrimary
+                                            color = TextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
                                         )
                                         Spacer(Modifier.width(6.dp))
                                         Box(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
+                                                .clip(RoundedCornerShape(4.dp))
                                                 .background(AccentEmerald.copy(alpha = 0.15f))
                                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                                         ) {
@@ -809,17 +828,22 @@ private fun ForensicsTabContent(
                                                 text = "NEW",
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.ExtraBold,
-                                                color = AccentEmerald
+                                                color = AccentEmerald,
+                                                maxLines = 1,
+                                                softWrap = false
                                             )
                                         }
                                     }
                                     Text(
                                         text = "Deterministic storage auditing & entropy analysis",
                                         fontSize = 11.sp,
-                                        color = TextSecondary
+                                        color = TextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
+                            Spacer(Modifier.width(8.dp))
                             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = PrimaryGreen)
                         }
 
@@ -893,17 +917,20 @@ private fun ForensicsTabContent(
                         Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "Forensic Lab & AI Reports",
+                                    text = "Forensic Lab & Reports",
                                     color = Color.White,
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 14.sp,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(Modifier.width(8.dp))
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
@@ -911,10 +938,12 @@ private fun ForensicsTabContent(
                                         .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text(
-                                        text = "100% OFFLINE",
+                                        text = "OFFLINE",
                                         color = AccentEmerald,
                                         fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
@@ -1077,14 +1106,21 @@ private fun ForensicSpecializedLabCard(
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
                         text = title,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 13.sp,
-                        color = TextPrimary
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
@@ -1095,7 +1131,9 @@ private fun ForensicSpecializedLabCard(
                             text = badge,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = accentColor
+                            color = accentColor,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -1838,33 +1876,44 @@ private fun VaultHighlightBanner(
             CuteRecoveredBoxIllustration(Modifier.size(54.dp))
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
-                        text = "Recovered Files Vault",
+                        text = "Recovered Vault",
                         color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
                     Spacer(Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(Color.White.copy(alpha = 0.22f))
+                            .background(Color.White.copy(alpha = 0.25f))
                             .padding(horizontal = 8.dp, vertical = 2.dp)
                     ) {
                         Text(
-                            text = "$recoveredCount saved",
+                            text = "$recoveredCount items",
                             color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = "Browse, share or export all restored photos, videos & documents",
+                    text = "Browse, share or export restored evidence",
                     color = Color(0xFFE0E7FF),
-                    fontSize = 12.sp
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             Spacer(Modifier.width(8.dp))
@@ -2287,7 +2336,10 @@ fun AdaptiveModeStatusCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Box(
                         modifier = Modifier
                             .size(8.dp)
@@ -2300,22 +2352,12 @@ fun AdaptiveModeStatusCard(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = accentColor,
-                        modifier = Modifier.testTag("root_status_card_title")
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Box(
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(accentColor.copy(alpha = 0.12f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = if (isRootActive) "ROOT-ACTIVE" else "STANDARD",
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = accentColor
-                        )
-                    }
+                            .weight(1f, fill = false)
+                            .testTag("root_status_card_title")
+                    )
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2323,34 +2365,19 @@ fun AdaptiveModeStatusCard(
                         OutlinedButton(
                             onClick = onForceStandard,
                             modifier = Modifier
-                                .height(28.dp)
+                                .height(26.dp)
                                 .testTag("switch_standard_mode_button"),
                             shape = RoundedCornerShape(6.dp),
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
                         ) {
                             Text(
                                 text = "STANDARD",
-                                fontSize = 10.sp,
+                                fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = TextSecondary
                             )
                         }
                         Spacer(Modifier.width(4.dp))
-                    }
-
-                    TextButton(
-                        onClick = onViewCapabilities,
-                        modifier = Modifier
-                            .height(28.dp)
-                            .testTag("view_capabilities_button"),
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
-                    ) {
-                        Text(
-                            text = "Capabilities →",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = PrimaryGreen
-                        )
                     }
                     IconButton(
                         onClick = { isExpanded = !isExpanded },
@@ -2366,16 +2393,39 @@ fun AdaptiveModeStatusCard(
                 }
             }
 
-            // Compact Status Line & Quick Chips
-            Text(
-                text = assessment.cardStatusLine,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("root_status_line")
-            )
+            // Row 2: Status line + Capabilities button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = assessment.cardStatusLine,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("root_status_line")
+                )
+                Spacer(Modifier.width(8.dp))
+                TextButton(
+                    onClick = onViewCapabilities,
+                    modifier = Modifier
+                        .height(28.dp)
+                        .testTag("view_capabilities_button"),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        text = "Capabilities →",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrimaryGreen
+                    )
+                }
+            }
 
             // 3 Compact Status Badges
             Row(
@@ -2497,7 +2547,7 @@ private fun StatusCompactBadge(label: String, color: Color, modifier: Modifier =
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(color.copy(alpha = 0.08f))
-            .padding(vertical = 4.dp, horizontal = 6.dp),
+            .padding(vertical = 4.dp, horizontal = 4.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -2506,6 +2556,7 @@ private fun StatusCompactBadge(label: String, color: Color, modifier: Modifier =
             fontWeight = FontWeight.Bold,
             color = color,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis
         )
     }

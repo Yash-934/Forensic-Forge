@@ -66,6 +66,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -986,15 +987,16 @@ private fun CoveragePill(
             .border(1.dp, color.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
             .padding(12.dp)
     ) {
-        Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = color)
+        Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(4.dp))
         Text(
             text = "${String.format(Locale.US, "%.2f", percent)}%",
-            fontSize = 20.sp,
+            fontSize = 18.sp,
             fontWeight = FontWeight.ExtraBold,
-            color = TextPrimary
+            color = TextPrimary,
+            maxLines = 1
         )
-        Text(subtitle, fontSize = 10.sp, color = TextSecondary)
+        Text(subtitle, fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1020,11 +1022,11 @@ private fun SummaryStatCard(
                 .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
                 .padding(13.dp)
         ) {
-            Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = accentColor)
+            Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = accentColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            Text(primaryValue, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary)
+            Text(primaryValue, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary, maxLines = 1)
             Spacer(Modifier.height(2.dp))
-            Text(secondaryValue, fontSize = 10.sp, color = TextSecondary, maxLines = 1)
+            Text(secondaryValue, fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

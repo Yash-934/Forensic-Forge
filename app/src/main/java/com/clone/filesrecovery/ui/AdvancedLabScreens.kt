@@ -409,17 +409,30 @@ private fun HexViewerTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Streaming Read-Only Hex & ASCII Inspector",
+                            text = "Streaming Hex & ASCII Inspector",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
-                            color = TextPrimary
+                            color = TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
-                        Text(
-                            text = "512 B / Page Window",
-                            fontSize = 11.sp,
-                            color = PrimaryGreen,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(PrimaryGreen.copy(alpha = 0.12f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "512 B Window",
+                                fontSize = 10.sp,
+                                color = PrimaryGreen,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -518,22 +531,38 @@ private fun HexViewerTab(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         // Signature Highlight Banner
-                        Row(
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "FILE SIGNATURE",
+                                    color = AccentEmerald,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "Offset 0x${page.pageOffset.toString(16).uppercase(Locale.US)} / ${formatSize(page.totalFileSize)}",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                             Text(
-                                text = "Signature: ${page.signatureDescription}",
-                                color = AccentEmerald,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Offset 0x${page.pageOffset.toString(16).uppercase(Locale.US)} / ${formatSize(page.totalFileSize)}",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace
+                                text = page.signatureDescription,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
@@ -2088,24 +2117,56 @@ private fun ScanCheckpointsAndHistoryTab(
 
 @Composable
 private fun LabKvRow(label: String, value: String, mono: Boolean = false) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp)
-    ) {
-        Text(
-            text = "$label:",
-            fontSize = 11.sp,
-            color = TextSecondary,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.width(130.dp)
-        )
-        Text(
-            text = value,
-            fontSize = 11.sp,
-            color = TextPrimary,
-            fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
-            modifier = Modifier.weight(1f)
-        )
+    if (value.length > 28) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 3.dp)
+        ) {
+            Text(
+                text = "$label:",
+                fontSize = 11.sp,
+                color = TextSecondary,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.height(2.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFFF1F5F9))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = value,
+                    fontSize = 10.sp,
+                    color = TextPrimary,
+                    fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
+                    lineHeight = 14.sp
+                )
+            }
+        }
+    } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "$label:",
+                fontSize = 11.sp,
+                color = TextSecondary,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.width(130.dp)
+            )
+            Text(
+                text = value,
+                fontSize = 11.sp,
+                color = TextPrimary,
+                fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
