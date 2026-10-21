@@ -37,7 +37,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FolderShared
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.RestoreFromTrash
@@ -55,6 +60,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -819,15 +825,22 @@ private fun ForensicsTabContent(
 
                         Spacer(Modifier.height(14.dp))
 
-                        // Features chips
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            ForensicFeaturePill("Scope Coverage", Modifier.weight(1f))
-                            ForensicFeaturePill(".nomedia Audit", Modifier.weight(1f))
-                            ForensicFeaturePill("Entropy & FBE", Modifier.weight(1f))
-                            ForensicFeaturePill("Mismatches", Modifier.weight(1f))
+                        // Features chips: 2x2 grid so text never cramps or overflows
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                ForensicFeaturePill("Scope Coverage", Modifier.weight(1f))
+                                ForensicFeaturePill(".nomedia Audit", Modifier.weight(1f))
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                ForensicFeaturePill("Entropy & FBE", Modifier.weight(1f))
+                                ForensicFeaturePill("Signature Mismatches", Modifier.weight(1f))
+                            }
                         }
 
                         Spacer(Modifier.height(14.dp))
@@ -853,19 +866,20 @@ private fun ForensicsTabContent(
                         .fillMaxWidth()
                         .clickable { nav.navigate("forensics") }
                         .testTag("card_forensic_lab"),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 18.dp),
+                            .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(14.dp))
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(AccentCyan.copy(alpha = 0.18f)),
                             contentAlignment = Alignment.Center
                         ) {
@@ -873,19 +887,23 @@ private fun ForensicsTabContent(
                                 imageVector = Icons.Filled.Security,
                                 contentDescription = "Forensic Lab",
                                 tint = AccentCyan,
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                         }
-                        Spacer(Modifier.width(14.dp))
+                        Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 Text(
-                                    text = "Forensic Lab & AI-Ready Reports",
+                                    text = "Forensic Lab & AI Reports",
                                     color = Color.White,
                                     fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 15.sp
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                                Spacer(Modifier.width(8.dp))
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
@@ -893,24 +911,28 @@ private fun ForensicsTabContent(
                                         .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text(
-                                        text = "OFFLINE",
+                                        text = "100% OFFLINE",
                                         color = AccentEmerald,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
                             }
-                            Spacer(Modifier.height(4.dp))
+                            Spacer(Modifier.height(3.dp))
                             Text(
-                                text = "SHA-256/MD5/SHA-1 • EXIF/PDF/ISOBMFF • JSON/MD/PDF/CSV Bundle",
+                                text = "Hashes • EXIF Metadata • Offline Export Bundles",
                                 color = Color(0xFF94A3B8),
-                                fontSize = 11.sp
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
+                        Spacer(Modifier.width(8.dp))
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = "Open Forensic Lab",
-                            tint = AccentCyan
+                            tint = AccentCyan,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -924,99 +946,41 @@ private fun ForensicsTabContent(
                 )
             }
 
-            // 3-Card Row: Hex & SQLite Lab, File Repair Lab, Cases & Custody
+            // Specialized Labs: Perfectly aligned full-width cards with icons, clear text & chevrons
             item {
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { nav.navigate("advanced_forensics_lab") }
-                            .testTag("home_card_advanced_lab"),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
-                                .padding(12.dp)
-                        ) {
-                            Text(
-                                text = "Hex & SQLite Lab",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
-                                color = PrimaryGreen
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = "Hex • Structure • SQLite DB parser",
-                                fontSize = 10.sp,
-                                color = TextSecondary,
-                                maxLines = 2
-                            )
-                        }
-                    }
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { nav.navigate("file_repair_lab") }
-                            .testTag("home_card_repair_lab"),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
-                                .padding(12.dp)
-                        ) {
-                            Text(
-                                text = "File Repair Lab",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
-                                color = SelectionOrange
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = "Safe Header & EOI/IEND Repair",
-                                fontSize = 10.sp,
-                                color = TextSecondary,
-                                maxLines = 2
-                            )
-                        }
-                    }
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { nav.navigate("case_manager") }
-                            .testTag("home_card_case_manager"),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
-                                .padding(12.dp)
-                        ) {
-                            Text(
-                                text = "Cases & Custody",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
-                                color = AccentEmerald
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = "Cases • Compare • Hash Timeline",
-                                fontSize = 10.sp,
-                                color = TextSecondary,
-                                maxLines = 2
-                            )
-                        }
-                    }
+                    ForensicSpecializedLabCard(
+                        title = "Hex & SQLite Database Lab",
+                        subtitle = "Deep binary inspector, file structure & SQLite table parser",
+                        badge = "HEX",
+                        accentColor = PrimaryGreen,
+                        icon = Icons.Filled.Code,
+                        testTag = "home_card_advanced_lab",
+                        onClick = { nav.navigate("advanced_forensics_lab") }
+                    )
+
+                    ForensicSpecializedLabCard(
+                        title = "Corrupted File Repair Lab",
+                        subtitle = "Header reconstruction & safe EOI / IEND validation",
+                        badge = "REPAIR",
+                        accentColor = SelectionOrange,
+                        icon = Icons.Filled.Build,
+                        testTag = "home_card_repair_lab",
+                        onClick = { nav.navigate("file_repair_lab") }
+                    )
+
+                    ForensicSpecializedLabCard(
+                        title = "Forensic Cases & Chain of Custody",
+                        subtitle = "Case dossier management, hash timelines & evidence verification",
+                        badge = "CUSTODY",
+                        accentColor = AccentEmerald,
+                        icon = Icons.Filled.FolderShared,
+                        testTag = "home_card_case_manager",
+                        onClick = { nav.navigate("case_manager") }
+                    )
                 }
             }
 
@@ -1057,16 +1021,101 @@ private fun ForensicFeaturePill(text: String, modifier: Modifier = Modifier) {
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFFF1F5F9))
-            .padding(vertical = 6.dp),
+            .padding(vertical = 8.dp, horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
-            fontSize = 9.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
             color = TextPrimary,
-            maxLines = 1
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+@Composable
+private fun ForensicSpecializedLabCard(
+    title: String,
+    subtitle: String,
+    badge: String,
+    accentColor: Color,
+    icon: ImageVector,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag(testTag),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(accentColor.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = accentColor,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 13.sp,
+                        color = TextPrimary
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(accentColor.copy(alpha = 0.15f))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = badge,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = accentColor
+                        )
+                    }
+                }
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = subtitle,
+                    fontSize = 11.sp,
+                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = Color(0xFF94A3B8),
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
 }
 
@@ -2215,21 +2264,24 @@ fun AdaptiveModeStatusCard(
         }
     }
 
+    var isExpanded by rememberSaveable { mutableStateOf(false) }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("root_status_card"),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.2.dp, accentColor.copy(alpha = 0.32f), RoundedCornerShape(20.dp))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .border(1.dp, accentColor.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            // Header Row: Status dot, Title, Badge, and Action buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2238,118 +2290,176 @@ fun AdaptiveModeStatusCard(
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Box(
                         modifier = Modifier
-                            .size(10.dp)
+                            .size(8.dp)
                             .clip(CircleShape)
                             .background(accentColor)
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         text = assessment.cardTitle,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = accentColor,
                         modifier = Modifier.testTag("root_status_card_title")
                     )
-                }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(accentColor.copy(alpha = 0.12f))
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        text = if (isRootActive) "ROOT-ENABLED" else "STANDARD",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = accentColor
-                    )
-                }
-            }
-
-            Text(
-                text = assessment.cardStatusLine,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary,
-                modifier = Modifier.testTag("root_status_line")
-            )
-
-            Text(
-                text = assessment.cardDescription,
-                fontSize = 12.sp,
-                color = TextSecondary,
-                lineHeight = 16.sp
-            )
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFFF8FAFC))
-                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
-                    .padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                StatusKeyValueLine("Device root status", assessment.deviceRootStatusLabel)
-                StatusKeyValueLine("Storage access", assessment.storageAccessStatusLabel)
-                StatusKeyValueLine("Recovery mode", assessment.recoveryModeLabel)
-                StatusKeyValueLine("Available recovery methods", availableSummary)
-                StatusKeyValueLine("Restricted capabilities", restrictedSummary)
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
-                    onClick = onViewCapabilities,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(40.dp)
-                        .testTag("view_capabilities_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                ) {
-                    Text(
-                        text = "VIEW CAPABILITIES",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
-                    )
-                }
-
-                if (assessment.rootState == DeviceRootState.ROOT_DETECTED_NOT_GRANTED) {
-                    OutlinedButton(
-                        onClick = onVerifyRoot,
+                    Spacer(Modifier.width(6.dp))
+                    Box(
                         modifier = Modifier
-                            .height(40.dp)
-                            .testTag("verify_root_button"),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(accentColor.copy(alpha = 0.12f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text(
-                            text = "VERIFY ROOT",
+                            text = if (isRootActive) "ROOT-ACTIVE" else "STANDARD",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = accentColor
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isRootActive) {
+                        OutlinedButton(
+                            onClick = onForceStandard,
+                            modifier = Modifier
+                                .height(28.dp)
+                                .testTag("switch_standard_mode_button"),
+                            shape = RoundedCornerShape(6.dp),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                        ) {
+                            Text(
+                                text = "STANDARD",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextSecondary
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                    }
+
+                    TextButton(
+                        onClick = onViewCapabilities,
+                        modifier = Modifier
+                            .height(28.dp)
+                            .testTag("view_capabilities_button"),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            text = "Capabilities →",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = PrimaryGreen
                         )
                     }
-                } else if (isRootActive) {
-                    OutlinedButton(
-                        onClick = onForceStandard,
+                    IconButton(
+                        onClick = { isExpanded = !isExpanded },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = "Toggle Details",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            // Compact Status Line & Quick Chips
+            Text(
+                text = assessment.cardStatusLine,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("root_status_line")
+            )
+
+            // 3 Compact Status Badges
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                StatusCompactBadge(
+                    label = if (isRootActive) "Root: Active" else "Root: None",
+                    color = if (isRootActive) AccentEmerald else TextSecondary,
+                    modifier = Modifier.weight(1f)
+                )
+                StatusCompactBadge(
+                    label = if (assessment.hasStorageAccess) "Access: Granted" else "Access: Standard",
+                    color = if (assessment.hasStorageAccess) AccentEmerald else Color(0xFFF59E0B),
+                    modifier = Modifier.weight(1f)
+                )
+                StatusCompactBadge(
+                    label = "${assessment.availableMethods.size} Methods",
+                    color = PrimaryGreen,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            // If root detected but not granted, show quick action right away
+            if (assessment.rootState == DeviceRootState.ROOT_DETECTED_NOT_GRANTED) {
+                Button(
+                    onClick = onVerifyRoot,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(34.dp)
+                        .testTag("verify_root_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text("Grant Root Permissions", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // Expanded details section (collapsible to save space)
+            if (isExpanded) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = assessment.cardDescription,
+                    fontSize = 11.sp,
+                    color = TextSecondary,
+                    lineHeight = 15.sp
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFFF8FAFC))
+                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(10.dp))
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    StatusKeyValueLine("Device root status", assessment.deviceRootStatusLabel)
+                    StatusKeyValueLine("Storage access", assessment.storageAccessStatusLabel)
+                    StatusKeyValueLine("Recovery mode", assessment.recoveryModeLabel)
+                    StatusKeyValueLine("Available recovery methods", availableSummary)
+                    StatusKeyValueLine("Restricted capabilities", restrictedSummary)
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = onViewCapabilities,
                         modifier = Modifier
-                            .height(40.dp)
-                            .testTag("switch_standard_mode_button"),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                            .fillMaxWidth()
+                            .height(36.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(0.dp)
                     ) {
                         Text(
-                            text = "STANDARD MODE",
+                            text = "FULL CAPABILITIES AUDIT",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = TextSecondary
+                            color = Color.White
                         )
                     }
                 }
@@ -2377,6 +2487,26 @@ private fun StatusKeyValueLine(label: String, value: String) {
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun StatusCompactBadge(label: String, color: Color, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(color.copy(alpha = 0.08f))
+            .padding(vertical = 4.dp, horizontal = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
