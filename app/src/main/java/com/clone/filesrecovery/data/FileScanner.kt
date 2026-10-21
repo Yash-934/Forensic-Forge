@@ -73,8 +73,15 @@ object FileScanner {
         // Priority hidden/trash directories to ensure immediate deep scan coverage
         val priorityDirs = listOf(
             ".Trash", ".Trash-1000", ".recycle", ".globalTrash",
-            "DCIM/.thumbnails", "DCIM/.globalTrash", "Pictures/.thumbnails",
+            "DCIM/.thumbnails", "DCIM/.globalTrash", "DCIM/.trash",
+            "Pictures/.thumbnails", "Pictures/.globalTrash",
             "Movies/.thumbnails", "MIUI/Gallery/cloud/.trashBin",
+            "MIUI/Gallery/cloud/.cache",
+            "Android/media/com.whatsapp/WhatsApp/Media/.Statuses",
+            "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/Sent",
+            "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/Private",
+            "WhatsApp/Media/.Statuses",
+            "WhatsApp/Media/WhatsApp Images/Sent",
             "LOST.DIR", "Download", "Bluetooth", "Android/media"
         )
         val primaryRoot = Environment.getExternalStorageDirectory()
@@ -84,6 +91,14 @@ object FileScanner {
                 if (d.exists() && d.canRead()) roots.add(d)
             }
         }
+        runCatching {
+            context.externalCacheDirs?.filterNotNull()?.forEach { cacheDir ->
+                if (cacheDir.exists() && cacheDir.canRead()) roots.add(cacheDir)
+            }
+        }
+
+        // Pre-populate set of parent directories that contain a .nomedia marker
+        val nomediaDirs = HashSet<String>()
 
         fun recordFile(
             file: File,
@@ -98,24 +113,45 @@ object FileScanner {
             if (length <= 0L) return
 
             val normalizedPath = abs.replace('\\', '/')
+            val parentPath = file.parentFile?.absolutePath ?: ""
+            val hasNomediaParent = parentPath in nomediaDirs ||
+                runCatching { File(file.parentFile, ".nomedia").exists() }.getOrDefault(false).also {
+                    if (it && parentPath.isNotEmpty()) nomediaDirs.add(parentPath)
+                }
+
+            val isTrashedFile = file.name.startsWith(".trashed", ignoreCase = true) ||
+                file.name.contains(".trashed-", ignoreCase = true) ||
+                normalizedPath.contains("/.Trash", ignoreCase = true) ||
+                normalizedPath.contains("/.recycle", ignoreCase = true) ||
+                normalizedPath.contains("/.globalTrash", ignoreCase = true) ||
+                normalizedPath.contains("/.trashBin", ignoreCase = true) ||
+                normalizedPath.contains("/trash/", ignoreCase = true)
+
+            val isThumbOrCache = normalizedPath.contains("/.thumbnails/", ignoreCase = true) ||
+                normalizedPath.contains("/thumbnails/", ignoreCase = true) ||
+                normalizedPath.contains("/cache/", ignoreCase = true) ||
+                normalizedPath.contains("/.cache/", ignoreCase = true) ||
+                normalizedPath.contains("/.Statuses/", ignoreCase = true)
+
+            val isLostDir = normalizedPath.contains("/LOST.DIR/", ignoreCase = true)
+
             val isHidden = forceHidden ||
+                isTrashedFile ||
+                isThumbOrCache ||
+                isLostDir ||
+                hasNomediaParent ||
                 file.isHidden ||
                 file.name.startsWith(".") ||
-                file.name.contains(".trashed", ignoreCase = true) ||
-                file.name.contains("trash", ignoreCase = true) ||
-                normalizedPath.contains("/.") ||
-                normalizedPath.contains("/LOST.DIR/", ignoreCase = true) ||
-                normalizedPath.contains("/cache/", ignoreCase = true) ||
-                normalizedPath.contains("/thumbnails/", ignoreCase = true)
+                normalizedPath.contains("/.")
 
             val originLabel = when {
                 origin.isNotEmpty() -> origin
-                file.name.startsWith(".trashed", ignoreCase = true) ||
-                    normalizedPath.contains("trash", ignoreCase = true) ||
-                    normalizedPath.contains("recycle", ignoreCase = true) -> "Recycle Bin"
+                isTrashedFile -> "Recycle Bin (Deleted)"
+                isLostDir -> "LOST.DIR Sector Carve"
                 normalizedPath.contains("thumbnail", ignoreCase = true) -> "Thumbnail Cache"
-                isHidden -> "Hidden Storage"
-                else -> "Deep Scan"
+                isThumbOrCache -> "Orphaned Cache Dig"
+                hasNomediaParent || isHidden -> "Hidden Storage (.nomedia)"
+                else -> "Active Gallery"
             }
 
             results += RecoverableFile(
@@ -145,12 +181,13 @@ object FileScanner {
                         onProgress(scanned, results.size, f.absolutePath)
                     }
 
-                    // Special case: carve embedded JPEGs from .thumbdata* files when scanning PHOTO
+                    // Special case: carve embedded JPEGs from .thumbdata* or thumbnail blob files when scanning PHOTO
                     if (category == FileCategory.PHOTO &&
-                        f.name.startsWith(".thumbdata", ignoreCase = true) &&
+                        (f.name.startsWith(".thumbdata", ignoreCase = true) ||
+                            (f.parentFile?.name?.equals(".thumbnails", ignoreCase = true) == true && f.length() > 65536L && f.extension.lowercase() !in FileCategory.PHOTO.extensions)) &&
                         f.length() > 4096L
                     ) {
-                        val carved = carveThumbdataJpegs(f, carvedStagingDir, maxCount = 40)
+                        val carved = carveThumbdataJpegs(f, carvedStagingDir, maxCount = 120)
                         carved.forEach { cf ->
                             recordFile(cf, FileCategory.PHOTO, "jpg", forceHidden = true, origin = "Carved Thumbnail")
                         }
@@ -177,11 +214,14 @@ object FileScanner {
                         if (directCategory == null || directCategory == FileCategory.DOCUMENT || f.name.contains(".pdf_", true)) {
                             recordFile(f, FileCategory.DOCUMENT, inferredExt, forceHidden = true)
                         }
-                    } else if (rawExt in DEEP_INSPECT_EXTS || f.name.startsWith(".trashed", ignoreCase = true)) {
+                    } else if (rawExt in DEEP_INSPECT_EXTS ||
+                        f.name.startsWith(".trashed", ignoreCase = true) ||
+                        f.parentFile?.name?.equals("LOST.DIR", ignoreCase = true) == true
+                    ) {
                         // Layer 3: Magic-byte header signature detection
                         val sig = detectByMagicBytes(f)
                         if (sig != null && sig.first == category) {
-                            recordFile(f, sig.first, sig.second, forceHidden = true, origin = "Header Signature")
+                            recordFile(f, sig.first, sig.second, forceHidden = true, origin = "Header Signature Carve")
                         }
                     }
                 }
@@ -217,34 +257,80 @@ object FileScanner {
 
         // Ensure smooth visual scan experience if storage was small
         if (scanned < 30) {
-            onProgress(scanned, results.size, "/storage/emulated/0/Download")
+            onProgress(scanned, results.size, "/storage/emulated/0/DCIM/.thumbnails")
             delay(350)
         }
         onProgress(scanned, results.size, "")
 
-        // Sort: Hidden/Trashed and newest files first
+        // Sort: Deleted, Carved, and Hidden/Trashed files FIRST, then by newest timestamp
         results.sortedWith(
-            compareByDescending<RecoverableFile> { it.lastModified }
+            compareByDescending<RecoverableFile> { it.isDeletedOrCarved }
                 .thenByDescending { it.isHiddenOrTrashed }
+                .thenByDescending { it.lastModified }
         )
     }
 
     /**
-     * Builds the folder list shown on the Category Folder Breakdown screen
-     * (Screenshots 7 & 11: "Hidden Files", "All", and each parent folder).
+     * Builds the folder list shown on the Category Folder Breakdown screen.
+     * Places Deleted, Trashed, Carved, and Hidden buckets at the top so the user immediately
+     * sees dug-up deleted files rather than active gallery folders.
      */
     fun buildFolderBuckets(category: FileCategory, files: List<RecoverableFile>): List<FolderBucket> {
         if (files.isEmpty()) return emptyList()
         val buckets = ArrayList<FolderBucket>()
 
+        val deletedOrCarved = files.filter { it.isDeletedOrCarved }
+        val trashedFiles = files.filter {
+            it.recoveryOrigin.contains("Trash", true) ||
+                it.recoveryOrigin.contains("Recycle", true) ||
+                it.name.contains(".trashed", true)
+        }
+        val carvedFiles = files.filter {
+            it.recoveryOrigin.contains("Carved", true) ||
+                it.recoveryOrigin.contains("Thumbnail", true) ||
+                it.recoveryOrigin.contains("Signature", true) ||
+                it.recoveryOrigin.contains("LOST.DIR", true)
+        }
         val hiddenFiles = files.filter { it.isHiddenOrTrashed }
+
+        if (deletedOrCarved.isNotEmpty()) {
+            buckets += FolderBucket(
+                id = "__DELETED_CARVED__",
+                title = "Deleted & Dug-Up Files",
+                files = deletedOrCarved,
+                isHiddenBucket = true,
+                isDeletedBucket = true
+            )
+        }
+
+        if (trashedFiles.isNotEmpty()) {
+            buckets += FolderBucket(
+                id = "__TRASH__",
+                title = "Recycle Bin & Trashed",
+                files = trashedFiles,
+                isHiddenBucket = true,
+                isDeletedBucket = true
+            )
+        }
+
+        if (carvedFiles.isNotEmpty()) {
+            buckets += FolderBucket(
+                id = "__CARVED__",
+                title = "Carved Thumbnails & Remnants",
+                files = carvedFiles,
+                isHiddenBucket = true,
+                isDeletedBucket = true
+            )
+        }
+
         if (category == FileCategory.DOCUMENT || hiddenFiles.isNotEmpty()) {
             if (hiddenFiles.isNotEmpty()) {
                 buckets += FolderBucket(
                     id = "__HIDDEN__",
                     title = "Hidden Files",
                     files = hiddenFiles,
-                    isHiddenBucket = true
+                    isHiddenBucket = true,
+                    isDeletedBucket = true
                 )
             }
         }
@@ -257,13 +343,15 @@ object FileScanner {
         )
 
         val byFolder = files.groupBy { it.folderName }
-        // Sort folders so dot-folders (like .BBKLauncher2, .MoonReader, .kivy) or common folders appear nicely
+        // Sort folders so dot-folders / trash / thumbnails appear before normal gallery folders
         val sortedEntries = byFolder.entries.sortedWith(
             compareBy<Map.Entry<String, List<RecoverableFile>>> {
+                val keyLower = it.key.lowercase()
                 when {
-                    category == FileCategory.DOCUMENT && it.key.startsWith(".") -> 0
-                    category == FileCategory.DOCUMENT && it.key.firstOrNull()?.isDigit() == true -> 1
-                    else -> 2
+                    keyLower.contains("trash") || keyLower.contains("recycle") || keyLower.startsWith("deep_carved") -> 0
+                    keyLower.startsWith(".") || keyLower.contains("thumb") || keyLower.contains("cache") -> 1
+                    category == FileCategory.DOCUMENT && it.key.firstOrNull()?.isDigit() == true -> 2
+                    else -> 3
                 }
             }.thenBy { it.key.lowercase() }
         )
@@ -375,7 +463,9 @@ object FileScanner {
     }.getOrNull()
 
     /**
-     * Carves embedded JPEG images (FF D8 FF ... FF D9) out of Android .thumbdata* blob files.
+     * Carves embedded JPEG images (FF D8 FF ... FF D9) out of Android .thumbdata* blob files
+     * using a bounded sliding window (up to 32 MB) so large thumbnail caches are deeply dug
+     * without loading huge files into RAM.
      */
     private fun carveThumbdataJpegs(
         thumbFile: File,
@@ -383,38 +473,63 @@ object FileScanner {
         maxCount: Int
     ): List<File> = runCatching {
         val carved = ArrayList<File>()
-        val maxReadBytes = minOf(thumbFile.length(), 2L * 1024 * 1024).toInt()
-        val buf = ByteArray(maxReadBytes)
+        val fileLen = thumbFile.length()
+        if (fileLen < 4096L) return emptyList()
+
+        val maxInspectBytes = minOf(fileLen, 32L * 1024 * 1024)
+        val windowSize = 2 * 1024 * 1024 // 2 MB chunk
+        val overlap = 256 * 1024         // 256 KB overlap for JPEGs crossing chunk boundary
+        val buf = ByteArray(windowSize)
+
         RandomAccessFile(thumbFile, "r").use { raf ->
-            raf.readFully(buf, 0, maxReadBytes)
-        }
-        var i = 0
-        while (i < maxReadBytes - 4 && carved.size < maxCount) {
-            if ((buf[i].toInt() and 0xFF) == 0xFF &&
-                (buf[i + 1].toInt() and 0xFF) == 0xD8 &&
-                (buf[i + 2].toInt() and 0xFF) == 0xFF
-            ) {
-                var end = i + 3
-                val limit = minOf(maxReadBytes - 1, i + 2 * 1024 * 1024)
-                while (end < limit) {
-                    if ((buf[end].toInt() and 0xFF) == 0xFF &&
-                        (buf[end + 1].toInt() and 0xFF) == 0xD9
+            var offset = 0L
+            while (offset < maxInspectBytes && carved.size < maxCount) {
+                val toRead = minOf(windowSize.toLong(), maxInspectBytes - offset).toInt()
+                if (toRead < 4096) break
+                raf.seek(offset)
+                raf.readFully(buf, 0, toRead)
+
+                var i = 0
+                while (i < toRead - 4 && carved.size < maxCount) {
+                    if ((buf[i].toInt() and 0xFF) == 0xFF &&
+                        (buf[i + 1].toInt() and 0xFF) == 0xD8 &&
+                        (buf[i + 2].toInt() and 0xFF) == 0xFF
                     ) {
-                        val length = (end + 2) - i
-                        if (length in 4096..(2 * 1024 * 1024)) {
-                            val outFile = File(outDir, "carved_${thumbFile.name}_${carved.size + 1}.jpg")
-                            if (!outFile.exists()) {
-                                outFile.writeBytes(buf.copyOfRange(i, end + 2))
+                        var end = i + 3
+                        val limit = toRead - 1
+                        var foundEoi = false
+                        while (end < limit) {
+                            if ((buf[end].toInt() and 0xFF) == 0xFF &&
+                                (buf[end + 1].toInt() and 0xFF) == 0xD9
+                            ) {
+                                val length = (end + 2) - i
+                                if (length in 3072..(1536 * 1024)) {
+                                    val absPos = offset + i
+                                    val outFile = File(outDir, "carved_${thumbFile.name}_${absPos}.jpg")
+                                    if (!outFile.exists()) {
+                                        outFile.writeBytes(buf.copyOfRange(i, end + 2))
+                                    }
+                                    if (carved.none { it.absolutePath == outFile.absolutePath }) {
+                                        carved += outFile
+                                    }
+                                }
+                                i = end + 2
+                                foundEoi = true
+                                break
                             }
-                            carved += outFile
+                            end++
                         }
-                        i = end + 2
-                        break
+                        if (!foundEoi) {
+                            i++
+                        }
+                    } else {
+                        i++
                     }
-                    end++
                 }
+
+                if (offset + toRead >= maxInspectBytes) break
+                offset += (windowSize - overlap).toLong()
             }
-            i++
         }
         carved
     }.getOrDefault(emptyList())
@@ -425,12 +540,23 @@ object FileScanner {
     private fun queryMediaStoreDeep(context: Context, category: FileCategory): List<RecoverableFile> {
         val list = ArrayList<RecoverableFile>()
         val uri = MediaStore.Files.getContentUri("external")
-        val projection = arrayOf(
-            MediaStore.MediaColumns.DATA,
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.DATE_MODIFIED
-        )
+        val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            arrayOf(
+                MediaStore.MediaColumns.DATA,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.IS_TRASHED,
+                MediaStore.MediaColumns.IS_PENDING
+            )
+        } else {
+            arrayOf(
+                MediaStore.MediaColumns.DATA,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_MODIFIED
+            )
+        }
         val cursor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val args = Bundle().apply {
                 putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
@@ -446,6 +572,13 @@ object FileScanner {
             val nameIdx = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
             val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
             val dateIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+            val trashedIdx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                c.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
+            } else -1
+            val pendingIdx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                c.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
+            } else -1
+
             while (c.moveToNext()) {
                 val path = if (dataIdx >= 0) c.getString(dataIdx) else null
                 if (path.isNullOrBlank()) continue
@@ -458,7 +591,18 @@ object FileScanner {
                 val size = if (sizeIdx >= 0) c.getLong(sizeIdx).takeIf { it > 0 } ?: f.length() else f.length()
                 val modSec = if (dateIdx >= 0) c.getLong(dateIdx) else 0L
                 val lastMod = if (modSec > 0) modSec * 1000L else f.lastModified()
-                val isHidden = name.startsWith(".") || path.contains("/.") || name.contains("trashed", true)
+                val isMediaTrashed = (trashedIdx >= 0 && c.getInt(trashedIdx) == 1) ||
+                    (pendingIdx >= 0 && c.getInt(pendingIdx) == 1) ||
+                    name.contains(".trashed", true) ||
+                    path.contains("/.Trash", true) ||
+                    path.contains("/.recycle", true)
+                val isHidden = isMediaTrashed || name.startsWith(".") || path.contains("/.")
+                val origin = when {
+                    isMediaTrashed -> "Recycle Bin (Deleted)"
+                    path.contains("thumbnail", true) -> "Thumbnail Cache"
+                    isHidden -> "Hidden Storage (.nomedia)"
+                    else -> "Active Gallery"
+                }
                 list += RecoverableFile(
                     path = f.absolutePath,
                     name = name,
@@ -466,7 +610,7 @@ object FileScanner {
                     size = size,
                     lastModified = lastMod,
                     isHiddenOrTrashed = isHidden,
-                    recoveryOrigin = if (isHidden) "Trash / Hidden" else "MediaStore",
+                    recoveryOrigin = origin,
                     detectedExt = ext
                 )
             }

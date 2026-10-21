@@ -494,7 +494,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _foundLiveCount.value = found.size
                 val buckets = FileScanner.buildFolderBuckets(category, found)
                 _folderBuckets.value = buckets
-                currentBucket = buckets.firstOrNull { it.isAllBucket } ?: buckets.firstOrNull()
+                currentBucket = buckets.firstOrNull { it.id == "__DELETED_CARVED__" }
+                    ?: buckets.firstOrNull { it.isDeletedBucket }
+                    ?: buckets.firstOrNull { it.isHiddenBucket }
+                    ?: buckets.firstOrNull { it.isAllBucket }
+                    ?: buckets.firstOrNull()
 
                 val totalBytes = found.sumOf { it.size }
                 val completedCp = ScanCheckpoint(

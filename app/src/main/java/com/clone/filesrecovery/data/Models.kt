@@ -90,6 +90,32 @@ data class RecoverableFile(
 
     val dateGroupKey: String
         get() = formatGroupDate(lastModified)
+
+    val isDeletedOrCarved: Boolean
+        get() = isHiddenOrTrashed ||
+            recoveryOrigin.contains("Carved", ignoreCase = true) ||
+            recoveryOrigin.contains("Trash", ignoreCase = true) ||
+            recoveryOrigin.contains("Recycle", ignoreCase = true) ||
+            recoveryOrigin.contains("Thumbnail", ignoreCase = true) ||
+            recoveryOrigin.contains("Cache", ignoreCase = true) ||
+            recoveryOrigin.contains("Hidden", ignoreCase = true) ||
+            recoveryOrigin.contains("Signature", ignoreCase = true) ||
+            recoveryOrigin.contains("Orphan", ignoreCase = true) ||
+            recoveryOrigin.contains("LOST.DIR", ignoreCase = true)
+
+    val recoveryBadgeLabel: String
+        get() = when {
+            recoveryOrigin.contains("Trash", true) ||
+                recoveryOrigin.contains("Recycle", true) ||
+                name.contains(".trashed", true) -> "DELETED"
+            recoveryOrigin.contains("Carved", true) -> "CARVED"
+            recoveryOrigin.contains("Thumbnail", true) -> "THUMB CACHE"
+            recoveryOrigin.contains("Signature", true) ||
+                recoveryOrigin.contains("LOST.DIR", true) -> "RAW CARVE"
+            recoveryOrigin.contains("Cache", true) -> "CACHE DIG"
+            isHiddenOrTrashed || recoveryOrigin.contains("Hidden", true) -> "HIDDEN"
+            else -> "GALLERY"
+        }
 }
 
 data class FolderBucket(
@@ -97,7 +123,8 @@ data class FolderBucket(
     val title: String,
     val files: List<RecoverableFile>,
     val isHiddenBucket: Boolean = false,
-    val isAllBucket: Boolean = false
+    val isAllBucket: Boolean = false,
+    val isDeletedBucket: Boolean = false
 )
 
 data class StorageBreakdown(

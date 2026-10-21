@@ -131,9 +131,26 @@ fun ScanScreen(nav: NavController, vm: AppViewModel, category: FileCategory) {
                 modifier = mod.fillMaxSize()
             )
         } else {
+            val deletedCount = remember(results) { results.count { it.isDeletedOrCarved } }
+            val buckets by vm.folderBuckets.collectAsState()
             ScanCompletedView(
                 category = category,
                 foundCount = results.size,
+                deletedOrCarvedCount = deletedCount,
+                onViewDeletedDirectClick = {
+                    val deletedBucket = buckets.firstOrNull { it.id == "__DELETED_CARVED__" }
+                        ?: buckets.firstOrNull { it.isDeletedBucket }
+                    if (deletedBucket != null) {
+                        vm.selectBucket(deletedBucket)
+                        nav.navigate("results") {
+                            popUpTo("home") { inclusive = false }
+                        }
+                    } else {
+                        nav.navigate("folders") {
+                            popUpTo("home") { inclusive = false }
+                        }
+                    }
+                },
                 onViewClick = {
                     nav.navigate("folders") {
                         popUpTo("home") { inclusive = false }
@@ -291,10 +308,10 @@ private fun PhoneLaserScannerView(
                     color = TextPrimary
                 )
 
-                PipelineStageRow("Stage 1 • Multi-Root & Hidden Trash Walk", active = true)
-                PipelineStageRow("Stage 2 • Magic-Byte Binary Signature Carve", active = !isPreparing)
-                PipelineStageRow("Stage 3 • MediaStore Trashed & Pending Query", active = !isPreparing && foundCount > 0)
-                PipelineStageRow("Stage 4 • .thumbdata Embedded JPEG Carve", active = !isPreparing && category == FileCategory.PHOTO)
+                PipelineStageRow("Stage 1 • Priority Trash, .Trash & .nomedia Dig", active = true)
+                PipelineStageRow("Stage 2 • .thumbdata Embedded JPEG Binary Carve", active = !isPreparing)
+                PipelineStageRow("Stage 3 • MediaStore IS_TRASHED & Pending Query", active = !isPreparing && foundCount > 0)
+                PipelineStageRow("Stage 4 • Orphaned Cache & LOST.DIR Signature Scan", active = !isPreparing)
                 if (isRootEnabledMode) {
                     PipelineStageRow("Stage 5 • Root Read-Only Privileged VFS Scan", active = !isPreparing)
                 }
@@ -357,9 +374,12 @@ private fun PipelineStageRow(label: String, active: Boolean) {
 private fun ScanCompletedView(
     category: FileCategory,
     foundCount: Int,
+    deletedOrCarvedCount: Int,
+    onViewDeletedDirectClick: () -> Unit,
     onViewClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val activeGalleryCount = (foundCount - deletedOrCarvedCount).coerceAtLeast(0)
     Column(
         modifier = modifier.padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -380,8 +400,8 @@ private fun ScanCompletedView(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(88.dp)
-                        .clip(RoundedCornerShape(26.dp))
+                        .size(84.dp)
+                        .clip(RoundedCornerShape(24.dp))
                         .background(Brush.linearGradient(listOf(AccentEmerald, AccentCyan))),
                     contentAlignment = Alignment.Center
                 ) {
@@ -389,15 +409,15 @@ private fun ScanCompletedView(
                         imageVector = Icons.Filled.Check,
                         contentDescription = "Scan Completed",
                         tint = Color.White,
-                        modifier = Modifier.size(46.dp)
+                        modifier = Modifier.size(44.dp)
                     )
                 }
 
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(16.dp))
 
                 Text(
-                    text = "Deep Analysis Complete",
-                    fontSize = 23.sp,
+                    text = "Deep Forensic Dig Complete",
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = TextPrimary
                 )
@@ -406,34 +426,111 @@ private fun ScanCompletedView(
 
                 Text(
                     text = buildAnnotatedString {
-                        withStyle(SpanStyle(color = TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.Medium)) {
-                            append("Carved & indexed ")
+                        withStyle(SpanStyle(color = TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)) {
+                            append("Dug up ")
                         }
-                        withStyle(SpanStyle(color = PrimaryGreen, fontSize = 25.sp, fontWeight = FontWeight.ExtraBold)) {
-                            append("$foundCount")
+                        withStyle(SpanStyle(color = Color(0xFFDC2626), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)) {
+                            append("$deletedOrCarvedCount")
                         }
-                        withStyle(SpanStyle(color = TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.Medium)) {
-                            append(" recoverable ${category.countableLabel}")
+                        withStyle(SpanStyle(color = TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)) {
+                            append(" deleted/carved remnants ")
+                        }
+                        withStyle(SpanStyle(color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Normal)) {
+                            append("(+ $activeGalleryCount active files)")
                         }
                     }
                 )
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(14.dp))
+
+                // Forensic Breakdown Pill Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFFF8FAFC))
+                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "$deletedOrCarvedCount",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFFDC2626)
+                        )
+                        Text(
+                            text = "Deleted / Carved",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextSecondary
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(28.dp)
+                            .background(Color(0xFFCBD5E1))
+                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "$activeGalleryCount",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Active Storage",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = TextSecondary
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                if (deletedOrCarvedCount > 0) {
+                    Button(
+                        onClick = onViewDeletedDirectClick,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text(
+                            text = "View Deleted & Dug-Up ($deletedOrCarvedCount)",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
 
                 Button(
                     onClick = onViewClick,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(54.dp)
+                        .height(52.dp)
                         .testTag("scan_completed_view_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (deletedOrCarvedCount > 0) PrimaryGreen else PrimaryGreen
+                    ),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Text(
-                        text = "Inspect & Recover Files",
-                        fontSize = 16.sp,
+                        text = if (deletedOrCarvedCount > 0) "Browse By Folder & Category" else "Inspect & Recover Files",
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -448,8 +545,21 @@ fun FolderBreakdownScreen(nav: NavController, vm: AppViewModel) {
     val buckets by vm.folderBuckets.collectAsState()
     val results by vm.scanResults.collectAsState()
     val category = vm.currentCategory
+    val deletedTotal = remember(results) { results.count { it.isDeletedOrCarved } }
     val distinctFoldersCount = remember(results) {
         results.map { it.folderName }.distinct().size
+    }
+
+    var showDeletedBucketsOnly by remember(deletedTotal) {
+        mutableStateOf(false)
+    }
+
+    val displayedBuckets = remember(buckets, showDeletedBucketsOnly) {
+        if (showDeletedBucketsOnly) {
+            buckets.filter { it.isDeletedBucket || it.files.any { f -> f.isDeletedOrCarved } }
+        } else {
+            buckets
+        }
     }
 
     SimpleScaffold(
@@ -463,7 +573,7 @@ fun FolderBreakdownScreen(nav: NavController, vm: AppViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
         ) {
-            // Top "Finish" Summary Card (Screenshots 7 & 11)
+            // Top "Finish" Summary Card
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -471,63 +581,95 @@ fun FolderBreakdownScreen(nav: NavController, vm: AppViewModel) {
                     shape = RoundedCornerShape(20.dp),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 18.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(horizontal = 18.dp, vertical = 16.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clip(CircleShape)
-                                    .background(PrimaryGreen),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Check,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(PrimaryGreen),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Deep Dig Summary",
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF222222)
+                                    )
+                                    Text(
+                                        text = "$deletedTotal Deleted/Carved • ${results.size} Total",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (deletedTotal > 0) Color(0xFFDC2626) else Color(0xFF666B75)
+                                    )
+                                }
                             }
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                text = "Finish",
-                                fontSize = 19.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF222222)
-                            )
+
+                            // Right side mini icons + file & folder counts
+                            Column(horizontalAlignment = Alignment.End) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    when (category) {
+                                        FileCategory.AUDIO -> CuteMusicNoteIllustration(Modifier.size(20.dp))
+                                        FileCategory.DOCUMENT -> CuteDocSheetStackIllustration(Modifier.size(20.dp))
+                                        FileCategory.PHOTO -> CuteCameraIllustration(Modifier.size(20.dp))
+                                        FileCategory.VIDEO -> CuteVideoProjectorIllustration(Modifier.size(20.dp))
+                                    }
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "${results.size}",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF222222)
+                                    )
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CuteFolderIllustration(Modifier.size(20.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "$distinctFoldersCount",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF222222)
+                                    )
+                                }
+                            }
                         }
 
-                        // Right side mini icons + file & folder counts
-                        Column(horizontalAlignment = Alignment.End) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                when (category) {
-                                    FileCategory.AUDIO -> CuteMusicNoteIllustration(Modifier.size(22.dp))
-                                    FileCategory.DOCUMENT -> CuteDocSheetStackIllustration(Modifier.size(22.dp))
-                                    FileCategory.PHOTO -> CuteCameraIllustration(Modifier.size(22.dp))
-                                    FileCategory.VIDEO -> CuteVideoProjectorIllustration(Modifier.size(22.dp))
-                                }
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = "${results.size}",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF222222)
+                        if (deletedTotal > 0) {
+                            Spacer(Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilterChipPill(
+                                    label = "All Vaults (${buckets.size})",
+                                    selected = !showDeletedBucketsOnly,
+                                    onClick = { showDeletedBucketsOnly = false }
                                 )
-                            }
-                            Spacer(Modifier.height(4.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CuteFolderIllustration(Modifier.size(22.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = "$distinctFoldersCount",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF222222)
+                                FilterChipPill(
+                                    label = "Deleted & Dug-Up Only",
+                                    selected = showDeletedBucketsOnly,
+                                    accentColor = Color(0xFFDC2626),
+                                    onClick = { showDeletedBucketsOnly = true }
                                 )
                             }
                         }
@@ -535,7 +677,7 @@ fun FolderBreakdownScreen(nav: NavController, vm: AppViewModel) {
                 }
             }
 
-            if (buckets.isEmpty()) {
+            if (displayedBuckets.isEmpty()) {
                 item {
                     Column(
                         modifier = Modifier
@@ -554,7 +696,7 @@ fun FolderBreakdownScreen(nav: NavController, vm: AppViewModel) {
                     }
                 }
             } else {
-                items(buckets, key = { it.id }) { bucket ->
+                items(displayedBuckets, key = { it.id }) { bucket ->
                     FolderBucketCard(
                         bucket = bucket,
                         category = category,
@@ -570,27 +712,67 @@ fun FolderBreakdownScreen(nav: NavController, vm: AppViewModel) {
 }
 
 @Composable
+private fun FilterChipPill(
+    label: String,
+    selected: Boolean,
+    accentColor: Color = PrimaryGreen,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) accentColor else Color.White)
+            .border(
+                width = 1.dp,
+                color = if (selected) accentColor else Color(0xFFD0D5DD),
+                shape = RoundedCornerShape(50)
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (selected) Color.White else Color(0xFF344054),
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+}
+
+@Composable
 private fun FolderBucketCard(
     bucket: FolderBucket,
     category: FileCategory,
     onClick: () -> Unit
 ) {
+    val isPriorityDeleted = bucket.isDeletedBucket
+    val deletedInBucket = remember(bucket.files) { bucket.files.count { it.isDeletedOrCarved } }
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
             .testTag("folder_bucket_${bucket.title}"),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF7F8FA)),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isPriorityDeleted) Color(0xFFFEF2F2) else Color(0xFFF7F8FA)
+        ),
         shape = RoundedCornerShape(20.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 18.dp),
+                .then(
+                    if (isPriorityDeleted) {
+                        Modifier.border(1.dp, Color(0xFFFECACA), RoundedCornerShape(20.dp))
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(horizontal = 18.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left icon matching Screenshot 7 (MP3 badge for Audio) and Screenshot 11 (Yellow Folder for Document)
             when (category) {
                 FileCategory.AUDIO -> {
                     FileTypeBadgeIcon(extension = "mp3", category = FileCategory.AUDIO)
@@ -616,26 +798,57 @@ private fun FolderBucketCard(
             Spacer(Modifier.width(16.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = bucket.title,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF1A1A1A),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = bucket.title,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isPriorityDeleted) Color(0xFF991B1B) else Color(0xFF1A1A1A),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isPriorityDeleted) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFFDC2626))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "DUG UP",
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "${bucket.files.size}",
-                    fontSize = 14.sp,
-                    color = Color(0xFF8C919A)
+                    text = if (isPriorityDeleted) {
+                        "${bucket.files.size} recoverable deleted/carved items"
+                    } else if (deletedInBucket > 0) {
+                        "${bucket.files.size} items ($deletedInBucket deleted/hidden)"
+                    } else {
+                        "${bucket.files.size} items"
+                    },
+                    fontSize = 13.sp,
+                    color = if (isPriorityDeleted) Color(0xFFB91C1C) else Color(0xFF8C919A),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
             Icon(
                 imageVector = Icons.Filled.ChevronRight,
                 contentDescription = null,
-                tint = Color(0xFF222222),
+                tint = if (isPriorityDeleted) Color(0xFF991B1B) else Color(0xFF222222),
                 modifier = Modifier.size(24.dp)
             )
         }
@@ -651,12 +864,19 @@ private enum class SizeFilter(val label: String, val minBytes: Long) {
     OVER_10MB("> 10 MB", 10L * 1024L * 1024L)
 }
 
+private enum class OriginFilter(val label: String) {
+    ALL_IN_BUCKET("All in Folder"),
+    DELETED_AND_CARVED("Deleted & Carved Only"),
+    THUMB_CARVED("Carved Thumbnails"),
+    TRASH_AND_HIDDEN("Trash & Hidden")
+}
+
 @Composable
 fun ResultScreen(nav: NavController, vm: AppViewModel) {
     val allResults by vm.scanResults.collectAsState()
     val bucket = vm.currentBucket
     val rawFiles = bucket?.files ?: allResults
-    val screenTitle = bucket?.title ?: "All"
+    val screenTitle = bucket?.title ?: "Deleted & Dug-Up Files"
 
     val selected by vm.selected.collectAsState()
     val isRecovering by vm.isRecovering.collectAsState()
@@ -664,11 +884,29 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
     val category = vm.currentCategory
 
     var sizeFilter by remember { mutableStateOf(SizeFilter.ALL) }
+    val hasDeletedInRaw = remember(rawFiles) { rawFiles.any { it.isDeletedOrCarved } }
+    // If user opened "All (Includes Gallery)" and there are deleted files, let them filter easily
+    var originFilter by remember(bucket?.id) {
+        mutableStateOf(OriginFilter.ALL_IN_BUCKET)
+    }
     var showFilterMenu by remember { mutableStateOf(false) }
 
-    val files = remember(rawFiles, sizeFilter) {
-        if (sizeFilter == SizeFilter.ALL) rawFiles
-        else rawFiles.filter { it.size >= sizeFilter.minBytes }
+    val files = remember(rawFiles, sizeFilter, originFilter) {
+        rawFiles.filter { file ->
+            val sizeOk = sizeFilter == SizeFilter.ALL || file.size >= sizeFilter.minBytes
+            val originOk = when (originFilter) {
+                OriginFilter.ALL_IN_BUCKET -> true
+                OriginFilter.DELETED_AND_CARVED -> file.isDeletedOrCarved
+                OriginFilter.THUMB_CARVED ->
+                    file.recoveryOrigin.contains("Carved", ignoreCase = true) ||
+                        file.recoveryOrigin.contains("Cache", ignoreCase = true) ||
+                        file.name.startsWith("carved_", ignoreCase = true)
+                OriginFilter.TRASH_AND_HIDDEN ->
+                    file.recoveryOrigin.contains("Recycle", ignoreCase = true) ||
+                        file.recoveryOrigin.contains("Hidden", ignoreCase = true)
+            }
+            sizeOk && originOk
+        }
     }
 
     val groupedByDate = remember(files) {
@@ -749,11 +987,11 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
         }
     ) { mod ->
         Column(modifier = mod.fillMaxSize()) {
-            // Sub-header: Circular checkbox + "Select all" on left, Filter funnel on right (Screenshots 12, 13, 14)
+            // Sub-header: Circular checkbox + "Select all" on left, Filter funnel on right
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 10.dp),
+                    .padding(horizontal = 18.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -769,12 +1007,14 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
                             if (allSelected) vm.clearSelection() else vm.selectAll(files)
                         }
                     )
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(10.dp))
                     Text(
-                        text = "Select all",
-                        fontSize = 16.sp,
+                        text = "Select all (${files.size})",
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF111111)
+                        color = Color(0xFF111111),
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
@@ -789,7 +1029,14 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         modifier = Modifier.testTag("results_forensic_report_btn")
                     ) {
-                        Text("Forensic Report", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PrimaryGreen)
+                        Text(
+                            text = "Forensic Report",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryGreen,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                     Spacer(Modifier.width(4.dp))
                     Box {
@@ -801,26 +1048,48 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
                             )
                         }
                         DropdownMenu(
-                        expanded = showFilterMenu,
-                        onDismissRequest = { showFilterMenu = false }
-                    ) {
-                        SizeFilter.entries.forEach { f ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = f.label,
-                                        fontWeight = if (sizeFilter == f) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (sizeFilter == f) PrimaryGreen else Color(0xFF222222)
-                                    )
-                                },
-                                onClick = {
-                                    sizeFilter = f
-                                    showFilterMenu = false
-                                }
-                            )
-                        }
+                            expanded = showFilterMenu,
+                            onDismissRequest = { showFilterMenu = false }
+                        ) {
+                            SizeFilter.entries.forEach { f ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = f.label,
+                                            fontWeight = if (sizeFilter == f) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (sizeFilter == f) PrimaryGreen else Color(0xFF222222)
+                                        )
+                                    },
+                                    onClick = {
+                                        sizeFilter = f
+                                        showFilterMenu = false
+                                    }
+                                )
+                            }
                         }
                     }
+                }
+            }
+
+            // Forensic Source Quick-Filter Bar (so user can isolate Deleted/Carved vs Active Gallery anytime)
+            if (hasDeletedInRaw && bucket?.isDeletedBucket != true) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChipPill(
+                        label = "All (${rawFiles.size})",
+                        selected = originFilter == OriginFilter.ALL_IN_BUCKET,
+                        onClick = { originFilter = OriginFilter.ALL_IN_BUCKET }
+                    )
+                    FilterChipPill(
+                        label = "Deleted & Dug-Up (${rawFiles.count { it.isDeletedOrCarved }})",
+                        selected = originFilter == OriginFilter.DELETED_AND_CARVED,
+                        accentColor = Color(0xFFDC2626),
+                        onClick = { originFilter = OriginFilter.DELETED_AND_CARVED }
+                    )
                 }
             }
 
@@ -852,7 +1121,7 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
                         val isCollapsed = collapsedGroups[dateLabel] == true
                         val groupSelected = groupFiles.all { selected.contains(it.path) }
 
-                        // Date Group Header Bar (Screenshots 12, 13, 14: "October 20.2026 v" ... "Select O")
+                        // Date Group Header Bar
                         item(key = "header_$dateLabel") {
                             Row(
                                 modifier = Modifier
@@ -932,7 +1201,7 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
                                     }
                                 }
                             } else {
-                                // Document / Audio rows matching Screenshots 12, 13, 14
+                                // Document / Audio rows
                                 items(groupFiles, key = { it.path }) { file ->
                                     DocumentOrAudioListItem(
                                         file = file,
@@ -960,6 +1229,12 @@ private fun DocumentOrAudioListItem(
     onToggle: () -> Unit,
     onOpen: () -> Unit
 ) {
+    val badgeColor = when (file.recoveryBadgeLabel) {
+        "DELETED" -> Color(0xFFDC2626)
+        "CARVED", "THUMB CACHE", "RAW CARVE" -> Color(0xFF7C3AED)
+        "CACHE DIG", "HIDDEN" -> Color(0xFFD97706)
+        else -> Color(0xFF64748B)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -973,18 +1248,41 @@ private fun DocumentOrAudioListItem(
         )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = middleEllipsize(file.name, 29),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF1A1A1A),
-                maxLines = 1
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = middleEllipsize(file.name, 24),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF1A1A1A),
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(badgeColor.copy(alpha = 0.14f))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = file.recoveryBadgeLabel,
+                        color = badgeColor,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
             Spacer(Modifier.height(4.dp))
             Text(
-                text = formatSize(file.size),
-                fontSize = 13.sp,
-                color = Color(0xFF888888)
+                text = "${formatSize(file.size)} • ${file.recoveryOrigin}",
+                fontSize = 12.sp,
+                color = Color(0xFF888888),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
         Spacer(Modifier.width(12.dp))
@@ -1003,6 +1301,12 @@ private fun FileGridItem(
     onOpen: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val badgeBg = when (file.recoveryBadgeLabel) {
+        "DELETED" -> Color(0xFFDC2626).copy(alpha = 0.88f)
+        "CARVED", "THUMB CACHE", "RAW CARVE" -> Color(0xFF7C3AED).copy(alpha = 0.88f)
+        "CACHE DIG", "HIDDEN" -> Color(0xFFD97706).copy(alpha = 0.88f)
+        else -> Color.Black.copy(alpha = 0.55f)
+    }
     Box(
         modifier = modifier
             .aspectRatio(1f)
@@ -1010,6 +1314,24 @@ private fun FileGridItem(
             .clickable { onOpen() }
     ) {
         FileThumb(file, Modifier.fillMaxSize())
+        // Top-Start Origin Badge (DELETED / THUMB CACHE / CARVED / GALLERY)
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(5.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(badgeBg)
+                .padding(horizontal = 5.dp, vertical = 2.dp)
+        ) {
+            Text(
+                text = file.recoveryBadgeLabel,
+                color = Color.White,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -1025,6 +1347,8 @@ private fun FileGridItem(
             text = formatSize(file.size),
             color = Color.White,
             fontSize = 10.sp,
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(topEnd = 6.dp))
@@ -1185,8 +1509,8 @@ fun DetailScreen(nav: NavController, vm: AppViewModel) {
             ) {
                 Column(Modifier.padding(16.dp)) {
                     InfoRow("Name", file.name)
+                    InfoRow("Status", "${file.recoveryBadgeLabel} (${file.recoveryOrigin})")
                     InfoRow("Folder", file.folderName)
-                    InfoRow("Source", file.recoveryOrigin)
                     InfoRow("Size", formatSize(file.size))
                     InfoRow("Modified", formatDate(file.lastModified))
                     InfoRow("Path", file.path)
