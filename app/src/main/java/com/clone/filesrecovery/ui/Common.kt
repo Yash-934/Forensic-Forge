@@ -229,15 +229,16 @@ fun FolderTabCard(
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
     ) {
         if (glowColor != null) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
+            Canvas(modifier = Modifier.matchParentSize()) {
+                val r = (size.minDimension * 0.72f).coerceAtLeast(1f)
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(glowColor.copy(alpha = 0.24f), Color.Transparent),
                         center = Offset(size.width * 0.82f, size.height * 0.22f),
-                        radius = size.minDimension * 0.72f
+                        radius = r
                     ),
                     center = Offset(size.width * 0.82f, size.height * 0.22f),
-                    radius = size.minDimension * 0.72f
+                    radius = r
                 )
             }
         }

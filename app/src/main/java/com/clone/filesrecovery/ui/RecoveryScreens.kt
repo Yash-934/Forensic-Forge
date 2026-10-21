@@ -51,6 +51,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -90,6 +91,7 @@ import com.clone.filesrecovery.data.RecoverableFile
 import com.clone.filesrecovery.data.formatDate
 import com.clone.filesrecovery.data.formatSize
 import com.clone.filesrecovery.data.middleEllipsize
+import com.clone.filesrecovery.forensics.OperatingMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -103,6 +105,7 @@ fun ScanScreen(nav: NavController, vm: AppViewModel, category: FileCategory) {
     val results by vm.scanResults.collectAsState()
     val progressText by vm.scanProgressText.collectAsState()
     val foundLive by vm.foundLiveCount.collectAsState()
+    val envAssessment by vm.environmentAssessment.collectAsState()
     var started by remember { mutableStateOf(false) }
 
     LaunchedEffect(category) {
@@ -118,16 +121,16 @@ fun ScanScreen(nav: NavController, vm: AppViewModel, category: FileCategory) {
         warmBackground = true
     ) { mod ->
         if (isScanning) {
-            // Active "Preparing" or "Scanning" view with Phone Laser Animation (Screenshots 5, 8, 9)
             PhoneLaserScannerView(
                 category = category,
                 isPreparing = isPreparing,
                 foundCount = foundLive,
                 scanningPath = progressText,
+                isRootEnabledMode = envAssessment.activeOperatingMode == OperatingMode.ROOT_ENABLED && envAssessment.rootShellVerifiedUid0,
+                modeLabel = envAssessment.recoveryModeLabel,
                 modifier = mod.fillMaxSize()
             )
         } else {
-            // Scan Completed view (Screenshots 6 & 10)
             ScanCompletedView(
                 category = category,
                 foundCount = results.size,
@@ -148,6 +151,8 @@ private fun PhoneLaserScannerView(
     isPreparing: Boolean,
     foundCount: Int,
     scanningPath: String,
+    isRootEnabledMode: Boolean = false,
+    modeLabel: String = "Standard",
     modifier: Modifier = Modifier
 ) {
     val transition = rememberInfiniteTransition(label = "sonar_scan")
@@ -280,7 +285,7 @@ private fun PhoneLaserScannerView(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = if (isPreparing) "Preparing Deep Carve Engine…" else "Active Deep Recovery Pipeline",
+                    text = if (isPreparing) "Preparing Deep Carve Engine ($modeLabel)…" else "Active Deep Recovery Pipeline ($modeLabel)",
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 15.sp,
                     color = TextPrimary
@@ -290,6 +295,9 @@ private fun PhoneLaserScannerView(
                 PipelineStageRow("Stage 2 • Magic-Byte Binary Signature Carve", active = !isPreparing)
                 PipelineStageRow("Stage 3 • MediaStore Trashed & Pending Query", active = !isPreparing && foundCount > 0)
                 PipelineStageRow("Stage 4 • .thumbdata Embedded JPEG Carve", active = !isPreparing && category == FileCategory.PHOTO)
+                if (isRootEnabledMode) {
+                    PipelineStageRow("Stage 5 • Root Read-Only Privileged VFS Scan", active = !isPreparing)
+                }
 
                 val displayPath = if (scanningPath.isNotBlank()) {
                     middleEllipsize(scanningPath, 42)
@@ -770,15 +778,29 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
                     )
                 }
 
-                Box {
-                    IconButton(onClick = { showFilterMenu = true }) {
-                        Icon(
-                            imageVector = Icons.Filled.FilterAlt,
-                            contentDescription = "Filter",
-                            tint = Color(0xFF222222)
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = {
+                            val chosen = files.filter { selected.contains(it.path) }.ifEmpty { files.take(40) }
+                            vm.runCaseForensicAnalysis(chosen)
+                            nav.navigate("forensics")
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.testTag("results_forensic_report_btn")
+                    ) {
+                        Text("Forensic Report", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PrimaryGreen)
                     }
-                    DropdownMenu(
+                    Spacer(Modifier.width(4.dp))
+                    Box {
+                        IconButton(onClick = { showFilterMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Filled.FilterAlt,
+                                contentDescription = "Filter",
+                                tint = Color(0xFF222222)
+                            )
+                        }
+                        DropdownMenu(
                         expanded = showFilterMenu,
                         onDismissRequest = { showFilterMenu = false }
                     ) {
@@ -796,6 +818,7 @@ fun ResultScreen(nav: NavController, vm: AppViewModel) {
                                     showFilterMenu = false
                                 }
                             )
+                        }
                         }
                     }
                 }
@@ -1167,6 +1190,24 @@ fun DetailScreen(nav: NavController, vm: AppViewModel) {
                     InfoRow("Size", formatSize(file.size))
                     InfoRow("Modified", formatDate(file.lastModified))
                     InfoRow("Path", file.path)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = {
+                            vm.analyzeSingleRecoverableFile(file)
+                            nav.navigate("forensics")
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("detail_forensic_inspect_btn")
+                    ) {
+                        Text(
+                            text = "Inspect Forensic Metadata, Hashes & Export AI Report",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = PrimaryGreen
+                        )
+                    }
                 }
             }
         }
@@ -1246,7 +1287,20 @@ fun RecoveredScreen(nav: NavController, vm: AppViewModel) {
 
     SimpleScaffold(
         title = "Recovered Files",
-        onBack = { nav.popBackStack() }
+        onBack = { nav.popBackStack() },
+        actions = {
+            if (recovered.isNotEmpty()) {
+                TextButton(
+                    onClick = {
+                        vm.runCaseForensicAnalysis(null)
+                        nav.navigate("forensics")
+                    },
+                    modifier = Modifier.testTag("recovered_forensic_report_btn")
+                ) {
+                    Text("Forensic Report", color = PrimaryGreen, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+        }
     ) { mod ->
         if (recovered.isEmpty()) {
             Column(

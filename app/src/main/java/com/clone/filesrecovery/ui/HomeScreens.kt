@@ -27,12 +27,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Language
@@ -41,14 +45,24 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Widgets
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.FolderSpecial
+import androidx.compose.material.icons.outlined.RestoreFromTrash
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -57,10 +71,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -79,6 +96,11 @@ import com.clone.filesrecovery.R
 import com.clone.filesrecovery.data.FileCategory
 import com.clone.filesrecovery.data.StorageBreakdown
 import com.clone.filesrecovery.data.formatGbPair
+import com.clone.filesrecovery.forensics.CapabilityAvailability
+import com.clone.filesrecovery.forensics.DeviceEnvironmentAssessment
+import com.clone.filesrecovery.forensics.DeviceRootState
+import com.clone.filesrecovery.forensics.OperatingMode
+import com.clone.filesrecovery.forensics.RecoveryMethodCapability
 
 // ---------------- Guide / onboarding ----------------
 
@@ -213,16 +235,55 @@ fun LanguageScreen(onDone: () -> Unit) {
     }
 }
 
-// ---------------- Redesigned DeepVault Studio Home Screen ----------------
+// ---------------- Redesigned DeepVault Studio with Material 3 Bottom Menu ----------------
+
+enum class MainTab(
+    val label: String,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector,
+    val testTag: String
+) {
+    RECOVERY(
+        label = "Recovery",
+        selectedIcon = Icons.Filled.RestoreFromTrash,
+        unselectedIcon = Icons.Outlined.RestoreFromTrash,
+        testTag = "bottom_nav_recovery"
+    ),
+    FORENSICS(
+        label = "Forensics",
+        selectedIcon = Icons.Filled.Security,
+        unselectedIcon = Icons.Outlined.Security,
+        testTag = "bottom_nav_forensics"
+    ),
+    CLEANERS(
+        label = "Cleaners",
+        selectedIcon = Icons.Filled.AutoAwesome,
+        unselectedIcon = Icons.Outlined.AutoAwesome,
+        testTag = "bottom_nav_cleaners"
+    ),
+    TOOLS(
+        label = "Vault & Tools",
+        selectedIcon = Icons.Filled.FolderSpecial,
+        unselectedIcon = Icons.Outlined.FolderSpecial,
+        testTag = "bottom_nav_tools"
+    )
+}
 
 @Composable
 fun HomeScreen(nav: NavController, vm: AppViewModel) {
     val context = LocalContext.current
     val breakdown by vm.storageBreakdown.collectAsState()
     val recoveredList by vm.recovered.collectAsState()
+    val envAssessment by vm.environmentAssessment.collectAsState()
+    var currentTab by rememberSaveable { mutableStateOf(MainTab.RECOVERY) }
 
     LaunchedEffect(Unit) {
+        vm.refreshEnvironmentAssessment()
         vm.refreshStorageBreakdown()
+    }
+
+    if (currentTab != MainTab.RECOVERY) {
+        BackHandler { currentTab = MainTab.RECOVERY }
     }
 
     fun navigateToScan(cat: FileCategory) {
@@ -233,21 +294,105 @@ fun HomeScreen(nav: NavController, vm: AppViewModel) {
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(BgLight)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-    ) {
-        // Redesigned Studio Top Bar
-        Surface(
-            color = Color.White,
-            shadowElevation = 2.dp
+    Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        bottomBar = {
+            Surface(
+                color = Color.White,
+                shadowElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+            ) {
+                NavigationBar(
+                    containerColor = Color.White,
+                    tonalElevation = 0.dp,
+                    windowInsets = WindowInsets(0, 0, 0, 0),
+                    modifier = Modifier.navigationBarsPadding()
+                ) {
+                    MainTab.entries.forEach { tab ->
+                        val selected = currentTab == tab
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { currentTab = tab },
+                            icon = {
+                                Icon(
+                                    imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
+                                    contentDescription = tab.label,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = tab.label,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 11.sp
+                                )
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = PrimaryGreen,
+                                selectedTextColor = PrimaryGreen,
+                                indicatorColor = Color(0xFFEEF2FF),
+                                unselectedIconColor = TextSecondary,
+                                unselectedTextColor = TextSecondary
+                            ),
+                            modifier = Modifier.testTag(tab.testTag)
+                        )
+                    }
+                }
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(BgLight)
+                .padding(bottom = innerPadding.calculateBottomPadding())
         ) {
+            Crossfade(targetState = currentTab, label = "tab_crossfade") { tab ->
+                when (tab) {
+                    MainTab.RECOVERY -> RecoveryTabContent(
+                        nav = nav,
+                        vm = vm,
+                        envAssessment = envAssessment,
+                        recoveredCount = recoveredList.size,
+                        onNavigateToScan = { cat -> navigateToScan(cat) },
+                        onSwitchTab = { target -> currentTab = target }
+                    )
+                    MainTab.FORENSICS -> ForensicsTabContent(
+                        nav = nav,
+                        vm = vm
+                    )
+                    MainTab.CLEANERS -> CleanersTabContent(
+                        nav = nav,
+                        vm = vm,
+                        breakdown = breakdown
+                    )
+                    MainTab.TOOLS -> ToolsVaultTabContent(
+                        nav = nav,
+                        vm = vm,
+                        recoveredCount = recoveredList.size
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecoveryTabContent(
+    nav: NavController,
+    vm: AppViewModel,
+    envAssessment: DeviceEnvironmentAssessment,
+    recoveredCount: Int,
+    onNavigateToScan: (FileCategory) -> Unit,
+    onSwitchTab: (MainTab) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Redesigned Top Bar for Recovery
+        Surface(color = Color.White, shadowElevation = 2.dp) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
                     .padding(horizontal = 18.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -340,18 +485,20 @@ fun HomeScreen(nav: NavController, vm: AppViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 16.dp, bottom = 28.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Redesigned Storage Radar & Breakdown Hero Card
+            // Adaptive Dual-Mode Root & Capability Status Card
             item {
-                StorageHeroDashboardCard(
-                    breakdown = breakdown,
-                    onClick = { nav.navigate("storage") }
+                AdaptiveModeStatusCard(
+                    assessment = envAssessment,
+                    onViewCapabilities = { nav.navigate("capabilities") },
+                    onVerifyRoot = { vm.requestRootModeVerification() },
+                    onForceStandard = { vm.setForceStandardMode(true) }
                 )
             }
 
-            // 2. Section Header: Deep Carve & Media Recovery
+            // Section Header: Deep Recovery Channels
             item {
                 SectionHeaderRow(
                     title = "Deep Recovery Channels",
@@ -359,7 +506,7 @@ fun HomeScreen(nav: NavController, vm: AppViewModel) {
                 )
             }
 
-            // 3. Row 1: Photo Recovery + Video Recovery
+            // Row 1: Photo Recovery + Video Recovery
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -373,7 +520,7 @@ fun HomeScreen(nav: NavController, vm: AppViewModel) {
                         subtitle = "JPEG, PNG, WebP, HEIC & .thumbdata carve",
                         badge = "IMG",
                         accentColor = AccentPhoto,
-                        onClick = { navigateToScan(FileCategory.PHOTO) }
+                        onClick = { onNavigateToScan(FileCategory.PHOTO) }
                     ) {
                         CuteCameraIllustration(modifier = Modifier.size(56.dp))
                     }
@@ -386,14 +533,14 @@ fun HomeScreen(nav: NavController, vm: AppViewModel) {
                         subtitle = "MP4, MKV, MOV, AVI & cached clips",
                         badge = "VID",
                         accentColor = AccentVideo,
-                        onClick = { navigateToScan(FileCategory.VIDEO) }
+                        onClick = { onNavigateToScan(FileCategory.VIDEO) }
                     ) {
                         CuteVideoProjectorIllustration(modifier = Modifier.size(56.dp))
                     }
                 }
             }
 
-            // 4. Row 2: Audio Recovery + Document Recovery
+            // Row 2: Audio Recovery + Document Recovery
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -407,7 +554,7 @@ fun HomeScreen(nav: NavController, vm: AppViewModel) {
                         subtitle = "MP3, WAV, M4A, Opus & voice notes",
                         badge = "AUD",
                         accentColor = AccentAudio,
-                        onClick = { navigateToScan(FileCategory.AUDIO) }
+                        onClick = { onNavigateToScan(FileCategory.AUDIO) }
                     ) {
                         CuteMusicNoteIllustration(modifier = Modifier.size(56.dp))
                     }
@@ -420,30 +567,607 @@ fun HomeScreen(nav: NavController, vm: AppViewModel) {
                         subtitle = "PDF, DOCX, XLSX, ZIP, RAR & APK",
                         badge = "DOC",
                         accentColor = AccentDoc,
-                        onClick = { navigateToScan(FileCategory.DOCUMENT) }
+                        onClick = { onNavigateToScan(FileCategory.DOCUMENT) }
                     ) {
                         CuteFolderIllustration(modifier = Modifier.size(56.dp))
                     }
                 }
             }
 
-            // 5. Vault Banner Card (Recovered Files Archive)
+            // Vault Banner Card
             item {
                 VaultHighlightBanner(
-                    recoveredCount = recoveredList.size,
+                    recoveredCount = recoveredCount,
                     onClick = { nav.navigate("recovered") }
                 )
             }
 
-            // 6. Section Header: Smart Cleaners & Forensics
+            // Quick Nav Shortcuts
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onSwitchTab(MainTab.FORENSICS) },
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(16.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFEEF2FF)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.Security, contentDescription = null, tint = PrimaryGreen, modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Forensics Suite", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                                Text("Labs & Reports →", fontSize = 10.sp, color = PrimaryGreen, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onSwitchTab(MainTab.CLEANERS) },
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(16.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFF0FDF4)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = AccentEmerald, modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Storage Cleaners", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                                Text("Radar & Sweep →", fontSize = 10.sp, color = AccentEmerald, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ForensicsTabContent(
+    nav: NavController,
+    vm: AppViewModel
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Forensics Top Bar
+        Surface(color = Color.White, shadowElevation = 2.dp) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF0F172A), PrimaryGreen))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Security,
+                            contentDescription = null,
+                            tint = AccentCyan,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Forensics Suite",
+                                fontSize = 21.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = TextPrimary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFFDCFCE7))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "100% LOCAL",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = AccentEmerald
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Deterministic On-Device Digital Forensics",
+                            fontSize = 12.sp,
+                            color = TextSecondary
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFF1F5F9))
+                        .clickable { nav.navigate("settings") }
+                        .testTag("settings_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Settings",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Storage Forensics Intelligence Hero Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { nav.navigate("storage_forensics") }
+                        .testTag("card_storage_forensics_intelligence"),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.2.dp, PrimaryGreen.copy(alpha = 0.25f), RoundedCornerShape(20.dp))
+                            .padding(18.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(RoundedCornerShape(13.dp))
+                                        .background(PrimaryGreen.copy(alpha = 0.12f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Storage,
+                                        contentDescription = "Storage Forensics",
+                                        tint = PrimaryGreen,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "Storage Forensics Intelligence",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 15.sp,
+                                            color = TextPrimary
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(AccentEmerald.copy(alpha = 0.15f))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "NEW",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = AccentEmerald
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = "Deterministic storage auditing & entropy analysis",
+                                        fontSize = 11.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
+                            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = PrimaryGreen)
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        // Features chips
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ForensicFeaturePill("Scope Coverage", Modifier.weight(1f))
+                            ForensicFeaturePill(".nomedia Audit", Modifier.weight(1f))
+                            ForensicFeaturePill("Entropy & FBE", Modifier.weight(1f))
+                            ForensicFeaturePill("Mismatches", Modifier.weight(1f))
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        Button(
+                            onClick = { nav.navigate("storage_forensics") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Launch Storage Forensics Dashboard", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            // Forensic Lab & AI-Ready Reports Banner Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { nav.navigate("forensics") }
+                        .testTag("card_forensic_lab"),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(AccentCyan.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Security,
+                                contentDescription = "Forensic Lab",
+                                tint = AccentCyan,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Forensic Lab & AI-Ready Reports",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 15.sp
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(AccentEmerald.copy(alpha = 0.22f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "OFFLINE",
+                                        color = AccentEmerald,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "SHA-256/MD5/SHA-1 • EXIF/PDF/ISOBMFF • JSON/MD/PDF/CSV Bundle",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Open Forensic Lab",
+                            tint = AccentCyan
+                        )
+                    }
+                }
+            }
+
+            // Section Header: Specialized Labs & Custody
             item {
                 SectionHeaderRow(
-                    title = "Smart Forensics & Cleaners",
-                    subtitle = "Deduplication, contacts restore & system sweep"
+                    title = "Specialized Labs & Evidence",
+                    subtitle = "Deep binary examination, repair & chain of custody"
                 )
             }
 
-            // 7. 2x2 Utility Grid: Similar Photos, Screenshot Cleaner, Contacts, Notifications
+            // 3-Card Row: Hex & SQLite Lab, File Repair Lab, Cases & Custody
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { nav.navigate("advanced_forensics_lab") }
+                            .testTag("home_card_advanced_lab"),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "Hex & SQLite Lab",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 13.sp,
+                                color = PrimaryGreen
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Hex • Structure • SQLite DB parser",
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                maxLines = 2
+                            )
+                        }
+                    }
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { nav.navigate("file_repair_lab") }
+                            .testTag("home_card_repair_lab"),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "File Repair Lab",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 13.sp,
+                                color = SelectionOrange
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Safe Header & EOI/IEND Repair",
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                maxLines = 2
+                            )
+                        }
+                    }
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { nav.navigate("case_manager") }
+                            .testTag("home_card_case_manager"),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "Cases & Custody",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 13.sp,
+                                color = AccentEmerald
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Cases • Compare • Hash Timeline",
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                maxLines = 2
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Zero-Cloud Integrity Statement
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF1F5F9))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Security,
+                            contentDescription = null,
+                            tint = PrimaryGreen,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = "Zero-Cloud Guarantee: DeepVault operates 100% deterministically on-device. No telemetry, cloud sync, or external AI connections.",
+                            fontSize = 11.sp,
+                            color = TextSecondary,
+                            lineHeight = 16.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ForensicFeaturePill(text: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFFF1F5F9))
+            .padding(vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = TextPrimary,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun CleanersTabContent(
+    nav: NavController,
+    vm: AppViewModel,
+    breakdown: StorageBreakdown
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Cleaners Top Bar
+        Surface(color = Color.White, shadowElevation = 2.dp) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(Brush.linearGradient(listOf(AccentCyan, AccentEmerald))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AutoAwesome,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Storage & Cleaners",
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Storage Breakdown & Smart System Sweep",
+                            fontSize = 12.sp,
+                            color = TextSecondary
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFF1F5F9))
+                        .clickable { nav.navigate("settings") }
+                        .testTag("settings_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Settings",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Storage Radar & Breakdown Card
+            item {
+                StorageHeroDashboardCard(
+                    breakdown = breakdown,
+                    onClick = { nav.navigate("storage_forensics") }
+                )
+            }
+
+            // Junk & Residual Sweep Banner Card
+            item {
+                JunkSweepBannerCard(
+                    onClick = { nav.navigate("junk") }
+                )
+            }
+
+            // Section Header: Smart Cleaners & Deduplication
+            item {
+                SectionHeaderRow(
+                    title = "Smart Cleaners & Deduplication",
+                    subtitle = "Perceptual hashing & storage hygiene"
+                )
+            }
+
+            // 2x1 Utility Grid: Duplicate Finder & Screenshots
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -474,6 +1198,142 @@ fun HomeScreen(nav: NavController, vm: AppViewModel) {
                 }
             }
 
+            // Deep Folder Breakdown Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { nav.navigate("folders") },
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(18.dp))
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CuteFolderIllustration(Modifier.size(46.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Directory & Folder Breakdown",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "Inspect heavy directories, caches & download folders",
+                                fontSize = 11.sp,
+                                color = TextSecondary
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = PrimaryGreen
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolsVaultTabContent(
+    nav: NavController,
+    vm: AppViewModel,
+    recoveredCount: Int
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Tools & Vault Top Bar
+        Surface(color = Color.White, shadowElevation = 2.dp) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF6366F1), Color(0xFF8B5CF6)))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.FolderSpecial,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Vault & Utilities",
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Restored Artifacts, System Logs & Device Audit",
+                            fontSize = 12.sp,
+                            color = TextSecondary
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFF1F5F9))
+                        .clickable { nav.navigate("settings") }
+                        .testTag("settings_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Settings",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Recovered Files Vault Hero Banner
+            item {
+                VaultHighlightBanner(
+                    recoveredCount = recoveredCount,
+                    onClick = { nav.navigate("recovered") }
+                )
+            }
+
+            // Section Header: Communication & System Recovery
+            item {
+                SectionHeaderRow(
+                    title = "System Recovery & Logs",
+                    subtitle = "Deleted contacts & captured notification history"
+                )
+            }
+
+            // Row: Contacts Restore + Notification Log
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -504,11 +1364,123 @@ fun HomeScreen(nav: NavController, vm: AppViewModel) {
                 }
             }
 
-            // 8. Full-width Junk & Residual Cache Sweep Banner
+            // Section Header: Device Environment & Configuration
             item {
-                JunkSweepBannerCard(
-                    onClick = { nav.navigate("junk") }
+                SectionHeaderRow(
+                    title = "Device Environment & Configuration",
+                    subtitle = "Root privileges, capabilities & app preferences"
                 )
+            }
+
+            // Capabilities Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { nav.navigate("capabilities") },
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(18.dp))
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFFEEF2FF)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Security,
+                                contentDescription = null,
+                                tint = PrimaryGreen,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Device Capabilities & Root Audit",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "Audit root privileges, SELinux status, and recovery methods",
+                                fontSize = 11.sp,
+                                color = TextSecondary
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = PrimaryGreen
+                        )
+                    }
+                }
+            }
+
+            // Settings & Language Row
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { nav.navigate("language") },
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.Language, contentDescription = null, tint = PrimaryGreen, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Column {
+                                Text("Language", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                                Text("English, etc.", fontSize = 11.sp, color = TextSecondary)
+                            }
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { nav.navigate("settings") },
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.Settings, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Column {
+                                Text("Settings", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                                Text("Vault & Theme", fontSize = 11.sp, color = TextSecondary)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1076,6 +2048,15 @@ fun SettingsScreen(nav: NavController) {
             )
 
             SettingsCardRow(
+                title = "Operating Mode & Capabilities",
+                subtitle = "Inspect Standard vs Root-Enabled mode & forensic limits",
+                icon = {
+                    Icon(Icons.Filled.Security, contentDescription = null, tint = PrimaryGreen, modifier = Modifier.size(22.dp))
+                },
+                onClick = { nav.navigate("capabilities") }
+            )
+
+            SettingsCardRow(
                 title = "Storage Analyzer",
                 subtitle = "Inspect partition usage & installed apps",
                 icon = {
@@ -1196,3 +2177,489 @@ private fun requestPinRecoveryShortcut(context: android.content.Context) {
     }
     Toast.makeText(context, "Shortcut widget pinned!", Toast.LENGTH_SHORT).show()
 }
+
+// ---------------- Adaptive Dual-Mode Status Card & Capabilities Screen ----------------
+
+@Composable
+fun AdaptiveModeStatusCard(
+    assessment: DeviceEnvironmentAssessment,
+    onViewCapabilities: () -> Unit,
+    onVerifyRoot: () -> Unit,
+    onForceStandard: () -> Unit
+) {
+    val isRootActive = assessment.activeOperatingMode == OperatingMode.ROOT_ENABLED
+    val accentColor = when (assessment.rootState) {
+        DeviceRootState.NON_ROOTED -> PrimaryGreen
+        DeviceRootState.ROOT_DETECTED_NOT_GRANTED -> Color(0xFFF59E0B)
+        DeviceRootState.ROOT_ACCESS_DENIED -> CoralRed
+        DeviceRootState.ROOT_ENABLED -> AccentEmerald
+        DeviceRootState.ROOT_RESTRICTED -> AccentCyan
+        DeviceRootState.ROOT_STATUS_UNKNOWN -> TextSecondary
+    }
+
+    val availableSummary = remember(assessment.availableMethods) {
+        if (assessment.availableMethods.isEmpty()) {
+            "Standard Android MediaStore & accessible storage"
+        } else {
+            val names = assessment.availableMethods.take(3).joinToString(", ") { it.title }
+            val extra = (assessment.availableMethods.size - 3).coerceAtLeast(0)
+            if (extra > 0) "$names (+$extra more)" else names
+        }
+    }
+
+    val restrictedSummary = remember(assessment.restrictedCapabilities) {
+        if (assessment.restrictedCapabilities.isEmpty()) {
+            "Hardware FBE evicted keys & TRIMmed flash blocks"
+        } else {
+            assessment.restrictedCapabilities.joinToString(", ") { it.title }
+        }
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("root_status_card"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.2.dp, accentColor.copy(alpha = 0.32f), RoundedCornerShape(20.dp))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(accentColor)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = assessment.cardTitle,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = accentColor,
+                        modifier = Modifier.testTag("root_status_card_title")
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(accentColor.copy(alpha = 0.12f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = if (isRootActive) "ROOT-ENABLED" else "STANDARD",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = accentColor
+                    )
+                }
+            }
+
+            Text(
+                text = assessment.cardStatusLine,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                modifier = Modifier.testTag("root_status_line")
+            )
+
+            Text(
+                text = assessment.cardDescription,
+                fontSize = 12.sp,
+                color = TextSecondary,
+                lineHeight = 16.sp
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFFF8FAFC))
+                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                StatusKeyValueLine("Device root status", assessment.deviceRootStatusLabel)
+                StatusKeyValueLine("Storage access", assessment.storageAccessStatusLabel)
+                StatusKeyValueLine("Recovery mode", assessment.recoveryModeLabel)
+                StatusKeyValueLine("Available recovery methods", availableSummary)
+                StatusKeyValueLine("Restricted capabilities", restrictedSummary)
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onViewCapabilities,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .testTag("view_capabilities_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        text = "VIEW CAPABILITIES",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
+                    )
+                }
+
+                if (assessment.rootState == DeviceRootState.ROOT_DETECTED_NOT_GRANTED) {
+                    OutlinedButton(
+                        onClick = onVerifyRoot,
+                        modifier = Modifier
+                            .height(40.dp)
+                            .testTag("verify_root_button"),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            text = "VERIFY ROOT",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryGreen
+                        )
+                    }
+                } else if (isRootActive) {
+                    OutlinedButton(
+                        onClick = onForceStandard,
+                        modifier = Modifier
+                            .height(40.dp)
+                            .testTag("switch_standard_mode_button"),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            text = "STANDARD MODE",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextSecondary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusKeyValueLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = "• $label: ",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = TextPrimary
+        )
+        Text(
+            text = value,
+            fontSize = 11.sp,
+            color = TextSecondary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+fun CapabilitiesScreen(nav: NavController, vm: AppViewModel) {
+    val context = LocalContext.current
+    val assessment by vm.environmentAssessment.collectAsState()
+    val isAssessing by vm.isAssessingEnvironment.collectAsState()
+    val forceStandard by vm.forceStandardMode.collectAsState()
+
+    SimpleScaffold(
+        title = "Operating Mode & Capabilities",
+        onBack = { nav.popBackStack() }
+    ) { mod ->
+        LazyColumn(
+            modifier = mod
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = assessment.cardTitle,
+                            color = AccentCyan,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = assessment.cardStatusLine,
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = assessment.cardDescription,
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        EnvironmentSpecLine("Device / OS", "${assessment.deviceModel} (Android ${assessment.androidRelease}, SDK ${assessment.sdkInt})")
+                        EnvironmentSpecLine("Root Status", assessment.deviceRootStatusLabel)
+                        EnvironmentSpecLine("Active Recovery Mode", assessment.recoveryModeLabel)
+                        EnvironmentSpecLine("Storage Access", assessment.storageAccessStatusLabel)
+                        EnvironmentSpecLine("SELinux Mode", assessment.selinuxMode)
+                        EnvironmentSpecLine("Storage Encryption", assessment.encryptionState)
+                        EnvironmentSpecLine("Raw Block Access", assessment.rawBlockAccessStatus)
+
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { vm.refreshEnvironmentAssessment() },
+                                enabled = !isAssessing,
+                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("reassess_environment_button")
+                            ) {
+                                Text(if (isAssessing) "Assessing…" else "Re-Assess Device", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            if (!assessment.rootShellVerifiedUid0) {
+                                OutlinedButton(
+                                    onClick = { vm.requestRootModeVerification() },
+                                    enabled = !isAssessing,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("probe_root_shell_button")
+                                ) {
+                                    Text("Check Root (su)", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        if (!assessment.hasStorageAccess) {
+                            Button(
+                                onClick = {
+                                    runCatching { context.startActivity(manageAllFilesIntent(context)) }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentEmerald),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Grant All Files Access Permission", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Force Standard Mode safe switch
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Lock Standard Non-Root Mode",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Always use standard Android storage APIs even if root indicators are present",
+                                fontSize = 12.sp,
+                                color = TextSecondary
+                            )
+                        }
+                        Switch(
+                            checked = forceStandard,
+                            onCheckedChange = { vm.setForceStandardMode(it) },
+                            modifier = Modifier.testTag("lock_standard_mode_switch")
+                        )
+                    }
+                }
+            }
+
+            // Available Recovery Methods
+            item {
+                SectionHeaderRow(
+                    title = "Available Recovery Methods (${assessment.availableMethods.size})",
+                    subtitle = "Dynamically verified capabilities active on this device"
+                )
+            }
+
+            items(assessment.availableMethods, key = { it.id }) { cap ->
+                CapabilityItemCard(cap)
+            }
+
+            // Restricted Capabilities
+            item {
+                SectionHeaderRow(
+                    title = "Restricted Capabilities (${assessment.restrictedCapabilities.size})",
+                    subtitle = "Capabilities unavailable in current mode or blocked by OS security"
+                )
+            }
+
+            items(assessment.restrictedCapabilities, key = { it.id }) { cap ->
+                CapabilityItemCard(cap)
+            }
+
+            // Honest Forensic & Encryption Disclosures
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBEB))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Color(0xFFFDE68A), RoundedCornerShape(18.dp))
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "Forensic Reality & Platform Constraints",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 14.sp,
+                            color = Color(0xFF92400E)
+                        )
+                        assessment.forensicLimitationsNotes.forEach { note ->
+                            Text(
+                                text = "• $note",
+                                fontSize = 12.sp,
+                                color = Color(0xFF78350F),
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EnvironmentSpecLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            color = Color(0xFF94A3B8),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(0.42f)
+        )
+        Text(
+            text = value,
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(0.58f)
+        )
+    }
+}
+
+@Composable
+private fun CapabilityItemCard(cap: RecoveryMethodCapability) {
+    val badgeColor = when (cap.availability) {
+        CapabilityAvailability.AVAILABLE -> AccentEmerald
+        CapabilityAvailability.LIMITED -> Color(0xFFF59E0B)
+        CapabilityAvailability.RESTRICTED -> CoralRed
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(16.dp))
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = cap.title,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = TextPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(badgeColor.copy(alpha = 0.14f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = cap.availability.label.uppercase(),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = badgeColor
+                    )
+                }
+            }
+            Text(
+                text = cap.description,
+                fontSize = 12.sp,
+                color = TextSecondary,
+                lineHeight = 16.sp
+            )
+            Text(
+                text = "Status: ${cap.statusReason}",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = badgeColor
+            )
+        }
+    }
+}
+
