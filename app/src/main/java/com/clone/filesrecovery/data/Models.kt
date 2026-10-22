@@ -9,6 +9,54 @@ import kotlin.math.log10
 import kotlin.math.pow
 
 /**
+ * Forensic source badge categories for recovered & carved artifacts.
+ */
+enum class RecoverySourceBadge(
+    val id: String,
+    val displayBadge: String,
+    val description: String
+) {
+    UNOVERWRITTEN_SECTOR(
+        id = "UNOVERWRITTEN_SECTOR",
+        displayBadge = "UNOVERWRITTEN_SECTOR",
+        description = "Carved from unoverwritten disk sectors, .thumbdata blobs, .exo/.cnt caches, or LOST.DIR clusters"
+    ),
+    SYSTEM_TRASH_ORIGINAL(
+        id = "SYSTEM_TRASH_ORIGINAL",
+        displayBadge = "SYSTEM_TRASH_ORIGINAL",
+        description = "100% original quality file from Android System Trash (IS_TRASHED/IS_PENDING) or OEM Recycle Bin"
+    ),
+    ORPHANED_THUMBNAIL(
+        id = "ORPHANED_THUMBNAIL",
+        displayBadge = "ORPHANED_THUMBNAIL",
+        description = "Orphaned thumbnail or MediaStore ID-gap preview whose original gallery item was permanently deleted"
+    ),
+    WAL_DB_REMNANT(
+        id = "WAL_DB_REMNANT",
+        displayBadge = "WAL_DB_REMNANT",
+        description = "Carved from unoverwritten 4 KB SQLite WAL frames, journal pages, or database freelist blocks"
+    ),
+    UNLINKED_FD(
+        id = "UNLINKED_FD",
+        displayBadge = "UNLINKED_FD",
+        description = "Recovered from an unlinked open file descriptor (/proc/*/fd/* -> deleted) before block reclamation"
+    ),
+    ACTIVE_GALLERY(
+        id = "ACTIVE_GALLERY",
+        displayBadge = "GALLERY",
+        description = "Active non-deleted file currently indexed in standard device storage"
+    )
+}
+
+/**
+ * Stream integrity status for carved media containers (e.g., ISO BMFF MP4/MOV atom chains).
+ */
+enum class StreamIntegrityStatus(val label: String) {
+    INTACT("INTACT_STREAM"),
+    NEEDS_REPAIR_PARTIAL("NEEDS_REPAIR / PARTIAL_STREAM")
+}
+
+/**
  * File categories with comprehensive extension rules + magic-byte support.
  */
 enum class FileCategory(
@@ -76,7 +124,11 @@ data class RecoverableFile(
     val lastModified: Long,
     val isHiddenOrTrashed: Boolean = false,
     val recoveryOrigin: String = "Storage",
-    val detectedExt: String = ""
+    val detectedExt: String = "",
+    val sourceBadge: RecoverySourceBadge = inferSourceBadge(recoveryOrigin, name, isHiddenOrTrashed),
+    val streamIntegrity: StreamIntegrityStatus = StreamIntegrityStatus.INTACT,
+    val imageWidth: Int = 0,
+    val imageHeight: Int = 0
 ) {
     val folderName: String
         get() {
@@ -92,7 +144,8 @@ data class RecoverableFile(
         get() = formatGroupDate(lastModified)
 
     val isDeletedOrCarved: Boolean
-        get() = isHiddenOrTrashed ||
+        get() = sourceBadge != RecoverySourceBadge.ACTIVE_GALLERY ||
+            isHiddenOrTrashed ||
             recoveryOrigin.contains("Unoverwritten", ignoreCase = true) ||
             recoveryOrigin.contains("Carved", ignoreCase = true) ||
             recoveryOrigin.contains("Trash", ignoreCase = true) ||
@@ -103,23 +156,47 @@ data class RecoverableFile(
             recoveryOrigin.contains("Signature", ignoreCase = true) ||
             recoveryOrigin.contains("Orphan", ignoreCase = true) ||
             recoveryOrigin.contains("Unlinked", ignoreCase = true) ||
+            recoveryOrigin.contains("WAL", ignoreCase = true) ||
             recoveryOrigin.contains("LOST.DIR", ignoreCase = true)
 
+    val needsRepairPartialStream: Boolean
+        get() = streamIntegrity == StreamIntegrityStatus.NEEDS_REPAIR_PARTIAL ||
+            recoveryOrigin.contains("NEEDS_REPAIR", ignoreCase = true) ||
+            recoveryOrigin.contains("PARTIAL_STREAM", ignoreCase = true)
+
     val recoveryBadgeLabel: String
-        get() = when {
-            recoveryOrigin.contains("Unoverwritten", true) ||
-                recoveryOrigin.contains("Unlinked", true) -> "UNOVERWRITTEN"
-            recoveryOrigin.contains("Trash", true) ||
-                recoveryOrigin.contains("Recycle", true) ||
-                name.contains(".trashed", true) -> "DELETED"
-            recoveryOrigin.contains("Carved", true) -> "CARVED"
-            recoveryOrigin.contains("Thumbnail", true) -> "THUMB CACHE"
-            recoveryOrigin.contains("Signature", true) ||
-                recoveryOrigin.contains("LOST.DIR", true) -> "RAW CARVE"
-            recoveryOrigin.contains("Cache", true) -> "CACHE DIG"
-            isHiddenOrTrashed || recoveryOrigin.contains("Hidden", true) -> "HIDDEN"
-            else -> "GALLERY"
+        get() = sourceBadge.displayBadge
+
+    companion object {
+        fun inferSourceBadge(
+            origin: String,
+            fileName: String,
+            isHiddenOrTrashed: Boolean
+        ): RecoverySourceBadge = when {
+            origin.contains("UNLINKED_FD", true) ||
+                origin.contains("Unlinked", true) -> RecoverySourceBadge.UNLINKED_FD
+            origin.contains("WAL_DB_REMNANT", true) ||
+                origin.contains("WAL", true) ||
+                origin.contains("SQLite", true) ||
+                origin.contains("Freelist", true) -> RecoverySourceBadge.WAL_DB_REMNANT
+            origin.contains("SYSTEM_TRASH_ORIGINAL", true) ||
+                origin.contains("Trash", true) ||
+                origin.contains("Recycle", true) ||
+                fileName.contains(".trashed", true) -> RecoverySourceBadge.SYSTEM_TRASH_ORIGINAL
+            origin.contains("ORPHANED_THUMBNAIL", true) ||
+                origin.contains("Orphaned", true) ||
+                origin.contains("ID-Gap", true) ||
+                origin.contains("Thumbnail", true) -> RecoverySourceBadge.ORPHANED_THUMBNAIL
+            origin.contains("UNOVERWRITTEN_SECTOR", true) ||
+                origin.contains("Unoverwritten", true) ||
+                origin.contains("Carved", true) ||
+                origin.contains("Signature", true) ||
+                origin.contains("LOST.DIR", true) ||
+                origin.contains("Cache", true) ||
+                isHiddenOrTrashed -> RecoverySourceBadge.UNOVERWRITTEN_SECTOR
+            else -> RecoverySourceBadge.ACTIVE_GALLERY
         }
+    }
 }
 
 data class FolderBucket(

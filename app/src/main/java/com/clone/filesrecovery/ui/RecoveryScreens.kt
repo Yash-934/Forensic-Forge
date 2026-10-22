@@ -1233,10 +1233,11 @@ private fun DocumentOrAudioListItem(
     onOpen: () -> Unit
 ) {
     val badgeColor = when (file.recoveryBadgeLabel) {
-        "UNOVERWRITTEN" -> Color(0xFFBE123C)
-        "DELETED" -> Color(0xFFDC2626)
-        "CARVED", "THUMB CACHE", "RAW CARVE" -> Color(0xFF7C3AED)
-        "CACHE DIG", "HIDDEN" -> Color(0xFFD97706)
+        "UNOVERWRITTEN_SECTOR", "UNOVERWRITTEN" -> Color(0xFFBE123C)
+        "SYSTEM_TRASH_ORIGINAL", "DELETED" -> Color(0xFFDC2626)
+        "ORPHANED_THUMBNAIL", "CARVED", "THUMB CACHE", "RAW CARVE" -> Color(0xFF7C3AED)
+        "WAL_DB_REMNANT" -> Color(0xFF0284C7)
+        "UNLINKED_FD", "CACHE DIG", "HIDDEN" -> Color(0xFFD97706)
         else -> Color(0xFF64748B)
     }
     Row(
@@ -1257,7 +1258,7 @@ private fun DocumentOrAudioListItem(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
-                    text = middleEllipsize(file.name, 24),
+                    text = middleEllipsize(file.name, 22),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF1A1A1A),
@@ -1281,10 +1282,11 @@ private fun DocumentOrAudioListItem(
                 }
             }
             Spacer(Modifier.height(4.dp))
+            val integrityNote = if (file.needsRepairPartialStream) " • ${file.streamIntegrity.label}" else ""
             Text(
-                text = "${formatSize(file.size)} • ${file.recoveryOrigin}",
+                text = "${formatSize(file.size)} • ${file.recoveryOrigin}$integrityNote",
                 fontSize = 12.sp,
-                color = Color(0xFF888888),
+                color = if (file.needsRepairPartialStream) Color(0xFFD97706) else Color(0xFF888888),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1306,10 +1308,11 @@ private fun FileGridItem(
     modifier: Modifier = Modifier
 ) {
     val badgeBg = when (file.recoveryBadgeLabel) {
-        "UNOVERWRITTEN" -> Color(0xFFBE123C).copy(alpha = 0.92f)
-        "DELETED" -> Color(0xFFDC2626).copy(alpha = 0.88f)
-        "CARVED", "THUMB CACHE", "RAW CARVE" -> Color(0xFF7C3AED).copy(alpha = 0.88f)
-        "CACHE DIG", "HIDDEN" -> Color(0xFFD97706).copy(alpha = 0.88f)
+        "UNOVERWRITTEN_SECTOR", "UNOVERWRITTEN" -> Color(0xFFBE123C).copy(alpha = 0.92f)
+        "SYSTEM_TRASH_ORIGINAL", "DELETED" -> Color(0xFFDC2626).copy(alpha = 0.88f)
+        "ORPHANED_THUMBNAIL", "CARVED", "THUMB CACHE", "RAW CARVE" -> Color(0xFF7C3AED).copy(alpha = 0.88f)
+        "WAL_DB_REMNANT" -> Color(0xFF0284C7).copy(alpha = 0.90f)
+        "UNLINKED_FD", "CACHE DIG", "HIDDEN" -> Color(0xFFD97706).copy(alpha = 0.88f)
         else -> Color.Black.copy(alpha = 0.55f)
     }
     Box(
@@ -1319,7 +1322,7 @@ private fun FileGridItem(
             .clickable { onOpen() }
     ) {
         FileThumb(file, Modifier.fillMaxSize())
-        // Top-Start Origin Badge (DELETED / THUMB CACHE / CARVED / GALLERY)
+        // Top-Start Origin Badge
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -1331,11 +1334,29 @@ private fun FileGridItem(
             Text(
                 text = file.recoveryBadgeLabel,
                 color = Color.White,
-                fontSize = 8.sp,
+                fontSize = 7.sp,
                 fontWeight = FontWeight.ExtraBold,
                 maxLines = 1,
                 softWrap = false
             )
+        }
+        if (file.needsRepairPartialStream) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color(0xFFD97706).copy(alpha = 0.92f))
+                    .padding(horizontal = 4.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    text = "PARTIAL",
+                    color = Color.White,
+                    fontSize = 7.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
+            }
         }
         Box(
             modifier = Modifier
@@ -1514,7 +1535,12 @@ fun DetailScreen(nav: NavController, vm: AppViewModel) {
             ) {
                 Column(Modifier.padding(16.dp)) {
                     InfoRow("Name", file.name)
-                    InfoRow("Status", "${file.recoveryBadgeLabel} (${file.recoveryOrigin})")
+                    InfoRow("Source Badge", file.recoveryBadgeLabel)
+                    InfoRow("Origin", file.recoveryOrigin)
+                    InfoRow("Stream Integrity", file.streamIntegrity.label)
+                    if (file.imageWidth > 0 && file.imageHeight > 0) {
+                        InfoRow("Dimensions", "${file.imageWidth} × ${file.imageHeight} px")
+                    }
                     InfoRow("Folder", file.folderName)
                     InfoRow("Size", formatSize(file.size))
                     InfoRow("Modified", formatDate(file.lastModified))
